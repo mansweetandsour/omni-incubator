@@ -1,7 +1,7 @@
 # Phase Plan — Omni Incubator
 
 ## Phase 1: Foundation
-Status: PENDING
+Status: COMPLETE
 Dependencies: none
 PRD excerpt:
   Init Next.js 14 App Router project with TypeScript, Tailwind, ESLint, src/ structure.

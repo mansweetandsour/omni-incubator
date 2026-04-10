@@ -1,9 +1,9 @@
 'use client'
 
-import * as Sentry from '@sentry/nextjs'
 import { useEffect } from 'react'
+import * as Sentry from '@sentry/nextjs'
 
-export default function Error({
+export default function ErrorPage({
   error,
   reset,
 }: {
@@ -15,11 +15,11 @@ export default function Error({
   }, [error])
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4">
-      <h2 className="text-2xl font-bold">Something went wrong</h2>
+    <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+      <h2 className="text-2xl font-semibold">Something went wrong</h2>
       <button
-        onClick={() => reset()}
-        className="rounded bg-zinc-900 px-4 py-2 text-white hover:bg-zinc-700"
+        onClick={reset}
+        className="text-primary underline underline-offset-4 hover:no-underline"
       >
         Try again
       </button>

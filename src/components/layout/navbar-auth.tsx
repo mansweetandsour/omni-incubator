@@ -1,50 +1,82 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type User = Record<string, any> | null
+import { useRouter } from 'next/navigation'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Button } from '@/components/ui/button'
+import type { User } from '@supabase/supabase-js'
 
 interface NavbarAuthProps {
-  user: User
+  user: User | null
+  username?: string | null
+  avatarUrl?: string | null
 }
 
-export function NavbarAuth({ user }: NavbarAuthProps) {
+export function NavbarAuth({ user, username, avatarUrl }: NavbarAuthProps) {
   const router = useRouter()
   const supabase = createClient()
 
-  async function handleSignOut() {
+  if (!user) {
+    return (
+      <Button variant="default" render={<a href="/login" />}>
+        Sign In
+      </Button>
+    )
+  }
+
+  const handleSignOut = async () => {
     await supabase.auth.signOut()
     router.refresh()
   }
 
-  if (!user) {
-    return (
-      <a
-        href="/login"
-        className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
-      >
-        Sign In
-      </a>
-    )
-  }
-
-  const initials = (user.email as string)?.[0]?.toUpperCase() ?? 'U'
+  const displayInitial =
+    username?.charAt(0).toUpperCase() ?? user.email?.charAt(0).toUpperCase() ?? 'U'
 
   return (
-    <div className="relative flex items-center gap-2">
-      <a href="/profile" className="flex items-center gap-2 text-sm text-zinc-700 hover:text-zinc-900">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-200 text-xs font-bold">
-          {initials}
-        </div>
-      </a>
-      <button
-        onClick={handleSignOut}
-        className="text-sm text-zinc-500 hover:text-zinc-700"
-      >
-        Sign out
-      </button>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="flex items-center gap-2 text-sm font-medium hover:opacity-80 focus:outline-none"
+          aria-label="Account menu"
+        >
+          {avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
+          ) : (
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold">
+              {displayInitial}
+            </div>
+          )}
+          <span className="hidden sm:block">{username ?? 'Account'}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem asChild>
+          <a href="/profile">Profile</a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href="/profile/ebooks">My E-books</a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href="/profile/orders">Orders</a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href="/profile/entries">Entries</a>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <a href="/profile/subscription">Subscription</a>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={handleSignOut}>
+          Sign Out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

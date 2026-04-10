@@ -2,7 +2,10 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
+import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Profile = Record<string, any>
@@ -23,7 +26,6 @@ export function ProfileForm({ initialProfile, userEmail }: ProfileFormProps) {
   const [avatarUrl, setAvatarUrl] = useState<string>(initialProfile?.avatar_url ?? '')
 
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [usernameError, setUsernameError] = useState<string | null>(null)
 
   const userId = initialProfile?.id as string
@@ -40,18 +42,18 @@ export function ProfileForm({ initialProfile, userEmail }: ProfileFormProps) {
       .upload(filePath, file, { upsert: true })
 
     if (error) {
-      setMessage({ type: 'error', text: `Avatar upload failed: ${error.message}` })
+      toast.error(`Avatar upload failed: ${error.message}`)
       return
     }
 
     const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filePath)
     setAvatarUrl(urlData.publicUrl)
+    toast.success('Avatar updated')
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
-    setMessage(null)
     setUsernameError(null)
 
     // Username uniqueness check
@@ -86,35 +88,30 @@ export function ProfileForm({ initialProfile, userEmail }: ProfileFormProps) {
     setSaving(false)
 
     if (error) {
-      setMessage({ type: 'error', text: error.message })
+      toast.error(error.message)
     } else {
-      setMessage({ type: 'success', text: 'Profile saved' })
+      toast.success('Profile saved')
     }
   }
 
   return (
     <form onSubmit={handleSave} className="space-y-6">
       {/* Email — read-only */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Email</label>
-        <input
-          type="email"
-          value={userEmail}
-          disabled
-          className="mt-1 w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-500"
-        />
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Email</label>
+        <Input type="email" value={userEmail} disabled />
       </div>
 
       {/* Avatar upload */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Avatar</label>
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Avatar</label>
         {avatarUrl && (
           <Image
             src={avatarUrl}
             alt="Avatar"
             width={64}
             height={64}
-            className="mt-2 h-16 w-16 rounded-full object-cover"
+            className="h-16 w-16 rounded-full object-cover"
             unoptimized
           />
         )}
@@ -122,83 +119,70 @@ export function ProfileForm({ initialProfile, userEmail }: ProfileFormProps) {
           type="file"
           accept="image/*"
           onChange={handleAvatarUpload}
-          className="mt-2 block text-sm text-zinc-600"
+          className="mt-2 block text-sm text-muted-foreground"
         />
       </div>
 
       {/* Display Name */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Display Name</label>
-        <input
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Display Name</label>
+        <Input
           type="text"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+          placeholder="Your display name"
         />
       </div>
 
       {/* Username */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Username</label>
-        <input
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Username</label>
+        <Input
           type="text"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+          placeholder="your_username"
         />
-        {usernameError && <p className="mt-1 text-sm text-red-600">{usernameError}</p>}
+        {usernameError && <p className="text-sm text-destructive">{usernameError}</p>}
       </div>
 
       {/* Bio */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Bio</label>
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Bio</label>
         <textarea
           value={bio}
           onChange={(e) => setBio(e.target.value)}
           rows={3}
-          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+          placeholder="Tell us about yourself"
         />
       </div>
 
       {/* Phone */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Phone</label>
-        <input
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Phone</label>
+        <Input
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+          placeholder="+1 555 000 0000"
         />
       </div>
 
       {/* Website */}
-      <div>
-        <label className="block text-sm font-medium text-zinc-700">Website</label>
-        <input
+      <div className="space-y-1.5">
+        <label className="block text-sm font-medium">Website</label>
+        <Input
           type="url"
           value={website}
           onChange={(e) => setWebsite(e.target.value)}
-          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm focus:border-zinc-500 focus:outline-none"
+          placeholder="https://your-website.com"
         />
       </div>
 
-      {message && (
-        <p
-          className={`text-sm ${
-            message.type === 'success' ? 'text-green-600' : 'text-red-600'
-          }`}
-        >
-          {message.text}
-        </p>
-      )}
-
-      <button
-        type="submit"
-        disabled={saving}
-        className="rounded-md bg-zinc-900 px-6 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
-      >
+      <Button type="submit" disabled={saving}>
         {saving ? 'Saving...' : 'Save Profile'}
-      </button>
+      </Button>
     </form>
   )
 }

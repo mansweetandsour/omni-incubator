@@ -1,0 +1,282 @@
+# Runbook: External Tasks Checklist (E1–E20)
+
+These tasks require human intervention — browser actions, account creation, or credential retrieval. They cannot be automated by the build pipeline.
+
+Status key: `[ ]` = not done, `[x]` = complete
+
+---
+
+## Phase 1 — Foundation
+
+### E1 — Create Supabase project (production)
+**Blocking:** Yes
+
+1. Go to [supabase.com](https://supabase.com) and create a new project.
+2. Note the **Project URL**, **anon key**, and **service_role key** from Project Settings → API.
+3. Add them to `.env.local` (and to Vercel environment variables when deploying).
+4. Note the **project ref** (subdomain) for `supabase link`.
+
+- [ ] Supabase project created
+- [ ] Credentials added to `.env.local`
+
+---
+
+### E2 — Configure Supabase Auth settings
+**Blocking:** Yes
+
+In Supabase Dashboard → Authentication → Settings:
+
+1. **Email**: Enabled
+2. **Email OTP**: Enabled (Confirm email = OTP mode)
+3. **Magic Links**: Disabled
+4. **OTP Expiry**: 600 seconds (10 minutes)
+5. **Secure email change**: Enabled
+6. **Site URL**: `http://localhost:3000` (change to `https://omniincubator.org` before launch)
+7. **Redirect URLs**: Add `http://localhost:3000/api/auth/callback` and `https://omniincubator.org/api/auth/callback`
+
+Full details in [supabase/auth-config.md](../../supabase/auth-config.md).
+
+- [ ] OTP enabled, magic links disabled
+- [ ] Site URL configured
+- [ ] Redirect URLs added
+
+---
+
+### E3 — Create Google Cloud OAuth client ID and secret
+**Blocking:** No (OTP auth works without Google OAuth)
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials.
+2. Create an OAuth 2.0 Client ID (Web application).
+3. Add authorized redirect URIs:
+   - `https://<your-supabase-project>.supabase.co/auth/v1/callback`
+4. Copy the **Client ID** and **Client Secret**.
+5. In Supabase Dashboard → Authentication → Providers → Google: enter the Client ID and Client Secret.
+
+- [ ] Google Cloud project created
+- [ ] OAuth client ID created
+- [ ] Redirect URI added
+- [ ] Client ID + Secret entered in Supabase Auth
+
+---
+
+### E10 — Create Sentry project, get DSN
+**Blocking:** No (app no-ops gracefully without DSN)
+
+1. Go to [sentry.io](https://sentry.io) and create a new project (Next.js).
+2. Copy the DSN from Project Settings → Client Keys → DSN.
+3. Add to `.env.local` as `NEXT_PUBLIC_SENTRY_DSN`.
+4. Optionally create an auth token (User Settings → Auth Tokens) and add as `SENTRY_AUTH_TOKEN` for source map upload during CI builds.
+
+- [ ] Sentry project created
+- [ ] DSN added to environment variables
+
+---
+
+## Phase 3 — Payments and Membership
+
+### E4 — Create Stripe account, get API keys (test mode)
+**Blocking:** Yes for Phase 3
+
+1. Go to [dashboard.stripe.com](https://dashboard.stripe.com) → Developers → API Keys.
+2. Copy **Publishable key** → `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
+3. Copy **Secret key** → `STRIPE_SECRET_KEY`
+
+- [ ] Stripe account created
+- [ ] Test mode API keys added to environment variables
+
+---
+
+### E5 — Create Stripe Products and Prices for membership
+**Blocking:** Yes for Phase 3
+
+Create two products in Stripe Dashboard (or via API):
+
+| Product | Price | Billing | ENV var for Price ID |
+|---|---|---|---|
+| Omni Membership — Monthly | $15.00 / month | Recurring | `STRIPE_MONTHLY_PRICE_ID` |
+| Omni Membership — Annual | $129.00 / year | Recurring | `STRIPE_ANNUAL_PRICE_ID` |
+
+Add the Stripe Price IDs (format: `price_...`) to environment variables.
+
+Note: The database seed data (`20240101000014_seed_data.sql`) inserts placeholder product rows for these memberships. The Stripe Price IDs must be added to the `products` table `stripe_price_id` column after the Stripe products are created (Phase 3 admin flow).
+
+- [ ] Monthly membership product + price created in Stripe
+- [ ] Annual membership product + price created in Stripe
+- [ ] Price IDs added to environment variables
+
+---
+
+### E6 — Configure Stripe webhook endpoint
+**Blocking:** Yes for Phase 3
+
+1. In Stripe Dashboard → Developers → Webhooks: Add endpoint.
+2. URL: `https://omniincubator.org/api/webhooks/stripe`
+3. Select events: `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed`
+4. Copy the **Signing secret** → `STRIPE_WEBHOOK_SECRET`
+
+For local testing: use `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
+
+- [ ] Webhook endpoint configured in Stripe
+- [ ] Signing secret added to environment variables
+
+---
+
+### E7 — Configure Stripe Customer Portal
+**Blocking:** Yes for Phase 3
+
+In Stripe Dashboard → Settings → Billing → Customer Portal:
+
+1. Enable: Allow customers to switch plans (monthly ↔ annual)
+2. Enable: Allow customers to cancel subscriptions
+3. Enable: Allow customers to update payment methods
+4. Save the portal configuration
+
+This is the only subscription management UI — no custom subscription update pages are built in the app.
+
+- [ ] Customer portal configured in Stripe
+
+---
+
+### E8 — Create Beehiiv account, get API key and publication ID
+**Blocking:** No (deferrable — newsletter subscribe calls no-op without key)
+
+1. Go to [app.beehiiv.com](https://app.beehiiv.com) → Settings → Integrations → API.
+2. Copy **API key** → `BEEHIIV_API_KEY`
+3. Copy **Publication ID** (format: `pub_...`) → `BEEHIIV_PUBLICATION_ID`
+
+- [ ] Beehiiv account created
+- [ ] API key and publication ID added to environment variables
+
+---
+
+### E9 — Create Resend account, verify domain, get API key
+**Blocking:** Yes for Phase 4A (confirmation emails are core to lead capture)
+
+1. Go to [resend.com](https://resend.com) → API Keys: create a key → `RESEND_API_KEY`
+2. Go to Domains: add `omniincubator.org`, follow DNS verification steps.
+3. Set `RESEND_FROM_EMAIL` to a verified address on the domain (e.g., `hello@omniincubator.org`).
+
+- [ ] Resend account created
+- [ ] Domain verified in Resend
+- [ ] API key added to environment variables
+- [ ] From address configured
+
+---
+
+### E18 — Resend domain verification (confirmed from Phase 3 requirements)
+**Blocking:** Yes for Phase 4A
+
+This is the same action as E9. Ensure domain DNS records (SPF, DKIM, DMARC) are fully propagated before Phase 4A launch. Confirmation emails from lead capture will not be delivered without a verified sender domain.
+
+- [ ] DNS records propagated and verified in Resend dashboard
+
+---
+
+### E20 — Create Rewardful account, connect Stripe, configure commission structure
+**Blocking:** No (affiliate tracking is additive; checkout works without it)
+
+1. Go to [getrewardful.com](https://www.getrewardful.com) and create an account.
+2. Connect your Stripe account.
+3. Configure commission: percentage per sale, recurring vs one-time, cookie duration, payout thresholds.
+4. Copy the **Client-side API key** → `NEXT_PUBLIC_REWARDFUL_API_KEY`
+
+The Rewardful JS snippet (`r.wdfl.co/rw.js`) is already included in the root layout and becomes active once the API key is set.
+
+- [ ] Rewardful account created
+- [ ] Stripe connected
+- [ ] Commission structure configured
+- [ ] API key added to environment variables
+
+---
+
+## Phase 4A — Lead Capture and Sweepstakes
+
+### E19 — Create Upstash Redis database, get REST credentials
+**Blocking:** No (lead capture works without rate limiting, but configure before launch)
+
+1. Go to [console.upstash.com](https://console.upstash.com) and create a Redis database (free tier is sufficient).
+2. Copy **REST URL** → `UPSTASH_REDIS_REST_URL`
+3. Copy **REST token** → `UPSTASH_REDIS_REST_TOKEN`
+
+- [ ] Upstash Redis database created
+- [ ] REST URL and token added to environment variables
+
+---
+
+## Phase 6 — Launch
+
+### E11 — Deploy to Vercel, configure custom domain
+**Blocking:** Yes
+
+1. Go to [vercel.com](https://vercel.com) → New Project → import from GitHub.
+2. Set all production environment variables in Vercel Dashboard → Settings → Environment Variables.
+3. Add custom domain `omniincubator.org` in Vercel Dashboard → Settings → Domains.
+
+- [ ] Project imported into Vercel
+- [ ] Production environment variables set
+- [ ] Custom domain added in Vercel
+
+---
+
+### E12 — DNS: point omniincubator.org to Vercel
+**Blocking:** Yes
+
+Update DNS records at your domain registrar to point to Vercel's nameservers or IP addresses (Vercel provides the exact records during domain setup).
+
+- [ ] DNS records updated
+- [ ] Domain resolves to Vercel (allow up to 48 hours for propagation)
+
+---
+
+### E13 — Switch Stripe to live mode, update keys
+**Blocking:** Yes for production
+
+1. In Stripe Dashboard, switch to Live mode.
+2. Get new live-mode API keys.
+3. Update `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET` in Vercel environment variables.
+4. Re-create Stripe Products, Prices, and Webhook endpoint in live mode.
+5. Update `STRIPE_MONTHLY_PRICE_ID` and `STRIPE_ANNUAL_PRICE_ID` with live mode Price IDs.
+
+- [ ] Live mode API keys obtained
+- [ ] Live mode products and prices created
+- [ ] Live mode webhook endpoint configured
+- [ ] Environment variables updated in Vercel
+
+---
+
+### E14 — Legal review: privacy policy, terms of service, sweepstakes rules
+**Blocking:** Soft (placeholder pages exist; content must be filled before launch)
+
+- [ ] Privacy policy content provided and added to `/privacy`
+- [ ] Terms of service content provided and added to `/terms`
+- [ ] Sweepstakes official rules reviewed by legal and added to `/sweepstakes/rules`
+
+---
+
+## Post-Deployment
+
+### E15 — Create first sweepstake in admin dashboard
+**Blocking:** Yes (sweepstake entries will not be awarded without an active sweepstake)
+
+- [ ] First sweepstake created with start date, end date, and prize details
+
+---
+
+### E16 — Upload first e-books via admin dashboard
+**Blocking:** Yes for non-empty library
+
+- [ ] At least one e-book uploaded with title, cover, price, and PDF
+
+---
+
+### E17 — Create first sample product via admin dashboard
+**Blocking:** Yes for lead capture landing page
+
+Create at minimum one sample product (e.g., "10 Top Business Lessons Guide"):
+- Upload PDF to `sample-products` bucket
+- Configure lead capture fields (name, email, phone optional)
+- Set upsell products (link to membership)
+
+- [ ] Sample product created
+- [ ] Lead capture form configured
+- [ ] Upsell products linked

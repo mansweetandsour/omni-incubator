@@ -3,6 +3,8 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { Navbar } from '@/components/layout/navbar'
 import { Footer } from '@/components/layout/footer'
+import { Toaster } from '@/components/ui/sonner'
+import { Providers } from '@/components/providers'
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -16,7 +18,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: 'Omni Incubator',
-  description: 'Your membership platform for e-books, sweepstakes, and more.',
+  description: 'E-books, community, sweepstakes — everything you need to build.',
 }
 
 export default function RootLayout({
@@ -25,10 +27,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`} suppressHydrationWarning>
       <head>
         {/* Rewardful affiliate tracking */}
         {process.env.NEXT_PUBLIC_REWARDFUL_API_KEY && (
@@ -39,12 +38,15 @@ export default function RootLayout({
           />
         )}
       </head>
-      <body className="flex min-h-full flex-col">
-        {/* Phase 4A: multiplier banner slot */}
-        <div id="multiplier-banner-slot" />
-        <Navbar />
-        <main className="flex-1">{children}</main>
-        <Footer />
+      <body className="min-h-screen flex flex-col antialiased">
+        <Providers>
+          {/* Phase 4A: multiplier banner slot */}
+          <div id="multiplier-banner-slot" />
+          <Navbar />
+          <main className="flex-1">{children}</main>
+          <Footer />
+          <Toaster />
+        </Providers>
       </body>
     </html>
   )
