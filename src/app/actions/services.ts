@@ -1,5 +1,6 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { adminClient } from '@/lib/supabase/admin'
 import { slugify } from '@/lib/utils/slugify'
@@ -116,6 +117,14 @@ export async function updateService(
   const is_coming_soon =
     formData.get('is_coming_soon') === 'true' || formData.get('is_coming_soon') === 'on'
 
+  const cea_str = formData.get('custom_entry_amount')?.toString()
+  let custom_entry_amount: number | null = null
+  if (cea_str && cea_str.trim() !== '') {
+    const ceaParsed = parseInt(cea_str, 10)
+    if (isNaN(ceaParsed) || ceaParsed < 1) return { error: 'Entry amount must be a positive integer' }
+    custom_entry_amount = ceaParsed
+  }
+
   if (!title) return { error: 'Title is required' }
   if (!rate_type) return { error: 'Rate type is required' }
   if (!category) return { error: 'Category is required' }
@@ -148,10 +157,14 @@ export async function updateService(
       tags,
       status,
       is_coming_soon,
+      custom_entry_amount,
     })
     .eq('id', id)
 
   if (updateError) return { error: updateError.message }
+
+  revalidatePath('/admin/services')
+  revalidatePath('/marketplace')
 
   return { ok: true }
 }
@@ -169,5 +182,22 @@ export async function archiveService(
 
   if (error) return { error: error.message }
 
+  return { ok: true }
+}
+
+export async function approveService(
+  id: string
+): Promise<{ ok: true } | { error: string }> {
+  const auth = await getAdminUser()
+  if (!auth.ok) return { error: auth.error }
+
+  const { error } = await adminClient
+    .from('services')
+    .update({ status: 'approved' })
+    .eq('id', id)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/admin/services')
   return { ok: true }
 }

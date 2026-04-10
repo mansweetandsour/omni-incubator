@@ -1,6 +1,9 @@
+import { Suspense } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { Badge } from '@/components/ui/badge'
 import { LeadCaptureForm } from '@/components/sweepstakes/LeadCapturePopup'
+import { EntryBadge } from '@/components/sweepstakes/EntryBadge'
 
 export const revalidate = 60
 
@@ -9,8 +12,9 @@ export default async function MarketplacePage() {
 
   const { data: services } = await supabase
     .from('services')
-    .select('id, title, description, category, is_coming_soon')
+    .select('id, slug, title, description, category, is_coming_soon, custom_entry_amount')
     .is('deleted_at', null)
+    .in('status', ['active', 'approved'])
     .order('created_at', { ascending: false })
 
   return (
@@ -33,9 +37,10 @@ export default async function MarketplacePage() {
           <h2 className="text-xl font-bold mb-6">Available Services</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {services.map((service) => (
-              <div
+              <Link
                 key={service.id}
-                className="rounded-lg border bg-white dark:bg-zinc-900 p-6 space-y-3"
+                href={`/marketplace/${service.slug}`}
+                className="rounded-lg border bg-white dark:bg-zinc-900 p-6 space-y-3 hover:border-zinc-400 transition-colors block"
               >
                 <div className="flex items-start justify-between gap-2">
                   <h3 className="font-semibold">{service.title}</h3>
@@ -48,10 +53,17 @@ export default async function MarketplacePage() {
                 {service.description && (
                   <p className="text-sm text-zinc-500 line-clamp-3">{service.description}</p>
                 )}
+                {service.custom_entry_amount != null && service.custom_entry_amount > 0 && (
+                  <Suspense fallback={null}>
+                    <EntryBadge
+                      product={{ price_cents: 0, custom_entry_amount: service.custom_entry_amount }}
+                    />
+                  </Suspense>
+                )}
                 <Badge variant="secondary" className="text-xs">
                   {service.category}
                 </Badge>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

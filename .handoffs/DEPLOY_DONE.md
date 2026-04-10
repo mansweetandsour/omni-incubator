@@ -1,14 +1,14 @@
-# DEPLOY_DONE.md — Phase 4B: Sample Products & Admin Tools
+# DEPLOY_DONE.md — Phase 5: Marketplace Shell
 
 **Result: APPROVED**
 **Date:** 2026-04-09
-**Phase:** 4B — Sample Products & Admin Tools
+**Phase:** 5 — Marketplace Shell
 
 ---
 
 ## Summary
 
-Phase 4B is build-clean and infra-ready. QA confirmed 63 routes compile cleanly, 7/7 Vitest tests pass, and `tsc --noEmit` produces 0 errors. Migration `20240101000018` exists and is the only new migration. No new environment variables were introduced — all Phase 4B routes use existing Supabase client wrappers. The `sample-products` storage bucket is documented in `supabase/storage.md` (present since Phase 1). No hardcoded secrets found in any new Phase 4B file. E16 (upload first e-books) and E17 (create first sample product) are needed before launch.
+Phase 5 is build-clean and infra-ready. QA confirmed 37 routes compile cleanly, 7/7 Vitest tests pass, and `tsc --noEmit` produces 0 errors. Migration `20240101000019` exists and is the only new migration. No new environment variables were introduced. No hardcoded secrets found in any new or modified Phase 5 file. No deployment blockers.
 
 ---
 
@@ -22,7 +22,7 @@ QA Agent confirmed:
 
 ```
 npm run build
-→ 63 routes compiled successfully in 6.2s
+→ 37 routes compiled successfully
 → TypeScript: 0 errors
 → Next.js build: PASS (0 errors)
 
@@ -30,110 +30,104 @@ node node_modules/typescript/bin/tsc --noEmit
 → 0 errors
 
 node node_modules/vitest/vitest.mjs run
-→ 7/7 tests passed (no regressions from Phase 4A)
+→ 7/7 tests passed (no regressions)
 ```
 
-All Phase 4B routes confirmed compiled:
-- `/free/[slug]`, `/free/[slug]/download`
-- `/api/sample-products/[slug]/download`
-- `/api/admin/sweepstakes/[id]/export`
-- `/admin/users`, `/admin/users/[id]`
-- `/profile/entries`
-- `/sweepstakes`, `/sweepstakes/rules`
+Phase 5 routes confirmed compiled:
+- `/marketplace/[slug]` — new ISR route (service detail page)
+- `/marketplace` — modified (entry badges, card links, active/approved filter)
+- `/admin/services` — modified (status filter, approve quick-action)
+- `/admin/services/[id]/edit` — modified (`custom_entry_amount` field)
 
 ---
 
-### Task 2 — Migration 20240101000018 Exists
+### Task 2 — Migration 20240101000019 Exists
 
 **PASS**
 
 File confirmed present:
 ```
-supabase/migrations/20240101000018_export_sweepstake_entries_fn.sql
+supabase/migrations/20240101000019_services_custom_entry_amount.sql
 ```
 
-Contents: `CREATE OR REPLACE FUNCTION public.export_sweepstake_entries(p_sweepstake_id UUID)` — SECURITY DEFINER function that joins `entry_verification` materialized view with `profiles`. Returns 10 columns ordered by `total_entries DESC`.
+Contents:
+```sql
+-- Phase 5: Marketplace Shell — add custom_entry_amount to services
+ALTER TABLE public.services ADD COLUMN IF NOT EXISTS custom_entry_amount INTEGER;
+```
+
+Additive migration — `IF NOT EXISTS` guard makes it safe to re-apply. No existing data impact.
 
 **Migration must be applied before deployment:**
 ```bash
 supabase db push
 # Verify:
-SELECT routine_name FROM information_schema.routines
-WHERE routine_name = 'export_sweepstake_entries';
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'services' AND column_name = 'custom_entry_amount';
 ```
 
-This is the only new migration in Phase 4B. All 18 migrations must be applied in order.
+All 19 migrations must be applied in order.
 
 ---
 
-### Task 3 — No New Environment Variables Without .env.local.example Entries
+### Task 3 — No New Environment Variables
 
 **PASS — No new env vars introduced**
 
-All Phase 4B files were scanned for `process.env.` references:
+All Phase 5 files were scanned for `process.env.` references:
 
 | File | process.env references |
 |---|---|
-| `src/app/api/admin/sweepstakes/[id]/export/route.ts` | None — uses `createClient()` and `adminClient` from `src/lib/supabase/` wrappers |
-| `src/app/api/admin/sample-products/[id]/upload/route.ts` | None — uses `createClient()` and `adminClient` |
-| `src/app/api/sample-products/[slug]/download/route.ts` | None — uses `adminClient` |
-| `src/app/actions/sample-products.ts` | None |
-| `src/app/actions/admin-users.ts` | None |
-| All new frontend pages and components | None |
+| `src/app/marketplace/[slug]/page.tsx` | None — uses `adminClient` from `src/lib/supabase/admin` |
+| `src/components/marketplace/ServiceApproveButton.tsx` | None |
+| `src/components/marketplace/ServiceWaitlistCTA.tsx` | None |
+| `src/app/actions/services.ts` (extended) | None — uses `adminClient` |
+| All modified admin pages and components | None |
 
-All environment variables consumed by Phase 4B are already present in `.env.local.example` and were introduced in earlier phases (Supabase URL, anon key, service role key). No `.env.local.example` changes required.
-
----
-
-### Task 4 — sample-products Bucket Documented
-
-**PASS — Present since Phase 1**
-
-`supabase/storage.md` contains the `sample-products` bucket entry:
-
-```
-| sample-products  | Private | Yes (1hr expiry)   | Free lead magnet downloads          |
-```
-
-File path convention is documented: `sample-products/{sample-product-uuid}/{filename}.pdf`
-
-The bucket is private and must be accessed via signed URLs (1-hour expiry). This is correctly implemented in `src/app/api/sample-products/[slug]/download/route.ts` via `adminClient.storage.from('sample-products').createSignedUrl(product.file_path, 3600)`.
-
-No changes to `supabase/storage.md` required.
+All environment variables consumed by Phase 5 are already present in `.env.local.example` from prior phases. No `.env.local.example` changes required.
 
 ---
 
-### Task 5 — Hardcoded Secrets Audit
+### Task 4 — Secrets Scan
 
 **PASS — No hardcoded secrets found**
 
-Scanned all new and modified Phase 4B files for hardcoded credential patterns:
-- Stripe key prefixes: `sk_live_`, `sk_test_`, `pk_live_`, `pk_test_`, `whsec_`
-- Resend key prefix: `re_` (20+ char)
-- Supabase JWT / bearer token patterns: `eyJ` (40+ chars)
-- Upstash token patterns
+Scanned all new and modified Phase 5 files for hardcoded credential patterns (Stripe key prefixes, Resend key prefix, Supabase JWT bearer patterns, Upstash token patterns):
 
 **New files audited:**
-- `supabase/migrations/20240101000018_export_sweepstake_entries_fn.sql`
-- `src/app/actions/sample-products.ts`
-- `src/app/actions/admin-users.ts`
-- `src/app/api/admin/sample-products/[id]/upload/route.ts`
-- `src/app/api/sample-products/[slug]/download/route.ts`
-- `src/app/api/admin/sweepstakes/[id]/export/route.ts`
-- `src/components/sweepstakes/CountdownTimer.tsx`
-- `src/components/admin/sample-product-form.tsx`
-- `src/components/admin/sample-product-file-upload.tsx`
-- `src/components/admin/user-entry-adjustment-form.tsx`
-- `src/components/free/LeadCaptureFormFree.tsx`
-- All new admin and public pages under `src/app/(admin)/admin/` and `src/app/free/`, `src/app/sweepstakes/`, `src/app/profile/entries/`
+- `supabase/migrations/20240101000019_services_custom_entry_amount.sql`
+- `src/app/marketplace/[slug]/page.tsx`
+- `src/components/marketplace/ServiceApproveButton.tsx`
+- `src/components/marketplace/ServiceWaitlistCTA.tsx`
+
+**Modified files audited:**
+- `src/app/actions/services.ts`
+- `src/components/admin/service-form.tsx`
+- `src/components/admin/service-table.tsx`
+- `src/app/(admin)/admin/services/page.tsx`
+- `src/app/(admin)/admin/services/[id]/edit/page.tsx`
+- `src/app/marketplace/page.tsx`
 
 **Result: 0 matches.** All credential access is exclusively via environment variables read through `process.env.*` inside `src/lib/supabase/*.ts` client wrappers.
 
 ---
 
-## New Environment Variables (Phase 4B)
+### Task 5 — No Deployment Blockers
 
-None. No new environment variables were introduced.
+**PASS**
+
+Phase 5 changes are fully contained to:
+- 1 additive DB migration (safe, `IF NOT EXISTS`)
+- 3 new source files (all client or server components; no new API routes)
+- 6 modified source files (no structural changes to existing APIs)
+
+No new Vercel config changes. No new Supabase Storage buckets. No new cloud services. No Docker/compose changes. No new external service dependencies.
+
+---
+
+## New Environment Variables (Phase 5)
+
+None.
 
 ---
 
@@ -141,9 +135,7 @@ None. No new environment variables were introduced.
 
 | Resource | Type | Change |
 |---|---|---|
-| `supabase/migrations/20240101000018_export_sweepstake_entries_fn.sql` | Postgres function | New — `public.export_sweepstake_entries(p_sweepstake_id UUID)` SECURITY DEFINER function for CSV export |
-
-No new Vercel config changes. No new Supabase Storage buckets (sample-products was created in Phase 1). No new cloud services. No Docker/compose changes required.
+| `supabase/migrations/20240101000019_services_custom_entry_amount.sql` | Postgres migration | New — additive `ALTER TABLE public.services ADD COLUMN IF NOT EXISTS custom_entry_amount INTEGER` |
 
 ---
 
@@ -154,11 +146,13 @@ No new Vercel config changes. No new Supabase Storage buckets (sample-products w
 | Production | `https://omniincubator.org` (pending E11 — Vercel setup) |
 | Local dev | `http://localhost:3000` |
 
+New public route: `https://omniincubator.org/marketplace/{slug}`
+
 ---
 
 ## CI/CD Pipeline
 
-No changes. Deployment is via Vercel git integration (push to `main` triggers build + deploy). No GitHub Actions workflow exists. Build confirmed clean by QA (6.2s compile, 0 errors).
+No changes. Deployment is via Vercel git integration (push to `main` triggers build + deploy). Build confirmed clean by QA.
 
 ---
 
@@ -169,19 +163,14 @@ No changes. Deployment is via Vercel git integration (push to `main` triggers bu
 3. Click three-dot menu → **Promote to Production**
 4. Traffic is instantly re-routed — no rebuild required
 
-**Database rollback note:** Phase 4B includes 1 new migration. Rolling back application code while leaving the migration applied is safe — `export_sweepstake_entries` is additive and called only by the admin export route. If a full DB rollback is needed:
+**Database rollback note:** Phase 5 includes 1 new migration. Rolling back application code while leaving the migration applied is safe — `custom_entry_amount` is an additive nullable column; prior code ignores unknown columns. A full DB rollback is not recommended unless application code is also being rolled back:
 ```sql
-DROP FUNCTION IF EXISTS public.export_sweepstake_entries(UUID);
+ALTER TABLE public.services DROP COLUMN IF EXISTS custom_entry_amount;
 ```
-Only execute this if application code is also being rolled back.
+Only execute this if application code is also being rolled back to pre-Phase-5.
 
 ---
 
-## External Tasks Needed Before Launch (Phase 4B additions)
+## External Tasks
 
-| Task | Description | Consequence if missing |
-|---|---|---|
-| **E16** | Upload first e-books via `/admin/products` | Library is empty; `/library` shows no products; purchase entry awarding has nothing to attach to |
-| **E17** | Create first sample product via `/admin/sample-products` | No `/free/[slug]` landing pages exist; `/sweepstakes` "Ways to enter" section lists no free resources; sample-product lead capture flow unavailable |
-
-All prior external tasks (E4, E6, E8, E9/E18, E14, E15, E19) remain required. See `docs/runbooks/runbook-external-tasks.md` for the full checklist.
+No new external tasks introduced by Phase 5. All prior external tasks (E1–E20) remain as documented in `docs/runbooks/runbook-external-tasks.md`.

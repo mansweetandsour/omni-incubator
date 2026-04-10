@@ -20,6 +20,7 @@ interface Service {
   tags: string[]
   status: string | null
   is_coming_soon: boolean
+  custom_entry_amount: number | null
 }
 
 interface ServiceFormProps {
@@ -142,8 +143,8 @@ export function ServiceForm({ service }: ServiceFormProps) {
           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <option value="hourly">Hourly</option>
-          <option value="project">Project</option>
-          <option value="retainer">Retainer</option>
+          <option value="fixed">Fixed</option>
+          <option value="monthly">Monthly</option>
           <option value="custom">Custom</option>
         </select>
       </div>
@@ -210,12 +211,37 @@ export function ServiceForm({ service }: ServiceFormProps) {
         />
       </div>
 
+      {/* Custom Entry Amount */}
+      <div className="space-y-1">
+        <label className="text-sm font-medium" htmlFor="custom_entry_amount">
+          Entry Amount <span className="text-xs text-zinc-400">(optional — overrides default entry calculation)</span>
+        </label>
+        <Input
+          id="custom_entry_amount"
+          name="custom_entry_amount"
+          type="number"
+          min="1"
+          defaultValue={service?.custom_entry_amount ?? ''}
+          placeholder="e.g. 50"
+        />
+      </div>
+
       {/* Status (edit mode only) */}
       {isEdit && (
         <div className="space-y-1">
-          <label className="text-sm font-medium" htmlFor="status">
-            Status
-          </label>
+          <div className="flex items-center gap-2 mb-1">
+            <label className="text-sm font-medium" htmlFor="status">
+              Status
+            </label>
+            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
+              service.status === 'approved' ? 'bg-blue-100 text-blue-800 border-blue-200' :
+              service.status === 'active' ? 'bg-green-100 text-green-800 border-green-200' :
+              service.status === 'suspended' ? 'bg-red-100 text-red-800 border-red-200' :
+              'bg-amber-100 text-amber-800 border-amber-200'
+            }`}>
+              {service.status ?? 'pending'}
+            </span>
+          </div>
           <select
             id="status"
             name="status"
@@ -223,8 +249,9 @@ export function ServiceForm({ service }: ServiceFormProps) {
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
             <option value="active">Active</option>
-            <option value="paused">Paused</option>
+            <option value="suspended">Suspended</option>
           </select>
         </div>
       )}

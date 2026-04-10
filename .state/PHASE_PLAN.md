@@ -94,7 +94,7 @@ PRD excerpt:
   Exit criteria: Sample product landing captures leads and delivers file after confirmation. Admin can manage sample products, view/adjust user entries. CSV export works.
 
 ## Phase 5: Marketplace Shell
-Status: PENDING
+Status: COMPLETE
 Dependencies: Phase 4B complete
 PRD excerpt:
   /marketplace/[slug]: service detail page with Coming Soon overlay. Rate display including Custom/Inquire for custom rate_type.

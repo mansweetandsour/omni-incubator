@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { archiveService } from '@/app/actions/services'
+import { ServiceApproveButton } from '@/components/marketplace/ServiceApproveButton'
 
 interface Service {
   id: string
@@ -33,9 +34,15 @@ interface ServiceTableProps {
 
 function formatRate(service: Service): string {
   if (service.rate_label) return service.rate_label
-  if (service.rate_type === 'custom') return 'Custom'
-  if (service.rate_cents != null) return `$${(service.rate_cents / 100).toFixed(2)}`
-  return '—'
+  if (service.rate_type === 'custom' || service.rate_cents == null) return 'Custom'
+  const amount = `$${(service.rate_cents / 100).toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`
+  if (service.rate_type === 'hourly') return `${amount}/hr`
+  if (service.rate_type === 'fixed') return `${amount} fixed`
+  if (service.rate_type === 'monthly') return `${amount}/mo`
+  return amount
 }
 
 export function ServiceTable({ services }: ServiceTableProps) {
@@ -93,6 +100,9 @@ export function ServiceTable({ services }: ServiceTableProps) {
                 <Link href={`/admin/services/${service.id}/edit`} className={buttonVariants({ size: 'sm', variant: 'outline' })}>
                   Edit
                 </Link>
+                {!isArchived && service.status === 'pending' && (
+                  <ServiceApproveButton serviceId={service.id} />
+                )}
                 {!isArchived && (
                   <Button
                     size="sm"

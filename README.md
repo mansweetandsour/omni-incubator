@@ -118,6 +118,14 @@ Authentication (Email OTP + Google OAuth), Supabase setup, middleware, profile m
 - **Admin dashboard** (`/admin`) — replaced redirect stub; stat cards for active members, revenue this month, active sweepstake summary, and lead capture totals; amber warning banner when no active sweepstake; recent orders table.
 - **`CountdownTimer` component** (`src/components/sweepstakes/CountdownTimer.tsx`) — client component; null-initialized state to avoid hydration mismatch; renders "Sweepstake ended" when past the end date.
 
+### Phase 5 — Marketplace Shell
+- **Service detail page** (`/marketplace/[slug]`) — ISR 60s; 404 for `pending`/`suspended`/deleted services; rate display supporting all rate types (`hourly`, `fixed`, `monthly`, `custom`, `rate_label` override); `long_description` rendered as Markdown via `react-markdown` + `remark-gfm` in a `.prose` wrapper; provider name from `profiles` join; `<EntryBadge>` with Suspense when `custom_entry_amount > 0`; Coming Soon overlay with `<ServiceWaitlistCTA>` for `is_coming_soon` services; `generateMetadata`.
+- **Entry badges on marketplace cards** (`/marketplace`) — `custom_entry_amount` added to query; `<EntryBadge>` with Suspense on cards; service cards wrapped with `<Link>` to detail page; only `active`/`approved` services shown.
+- **Admin service approval workflow** (`/admin/services`) — status filter links (All / Pending Approval / Active); "Approve" quick-action button on pending rows via `<ServiceApproveButton>` client component; color status badge in edit form; status dropdown corrected to `pending`, `approved`, `active`, `suspended`.
+- **`approveService` Server Action** (`src/app/actions/services.ts`) — admin auth guard; sets `status='approved'`; revalidates `/admin/services`.
+- **Migration 000019** (`supabase/migrations/20240101000019_services_custom_entry_amount.sql`) — additive `ALTER TABLE` adding `custom_entry_amount INTEGER` to `services`.
+- **Build:** 37 routes compiled, 0 TypeScript errors, 7/7 Vitest tests pass.
+
 ### Phase 4A — Sweepstakes Core
 - **Entry engine** (`src/lib/sweepstakes.ts`) — pure functions (`calculateEntries`, `computeLeadCaptureEntries`) and DB writers (`awardPurchaseEntries`, `awardLeadCaptureEntries`). Entry calculation is separated from DB writes for testability (see ADR-009).
 - **Lead capture API** (`POST /api/lead-capture`) — creates a `lead_captures` row with `confirmed_at=NULL`; sends a confirmation email via Resend. Rate-limited 5/IP/hr via Upstash (skipped gracefully when not configured). Entries are not awarded until email is confirmed (see ADR-010).
@@ -149,7 +157,7 @@ omni-incubator/
 │   │   │       └── [others]/       # Placeholder pages (ebooks, orders)
 │   │   ├── actions/
 │   │   │   ├── products.ts         # Server Actions: createProduct, updateProduct, archiveProduct
-│   │   │   ├── services.ts         # Server Actions: createService, updateService, archiveService
+│   │   │   ├── services.ts         # Server Actions: createService, updateService, archiveService, approveService
 │   │   │   ├── sample-products.ts  # Server Actions: createSampleProduct, updateSampleProduct, toggleSampleProductActive
 │   │   │   └── admin-users.ts      # Server Action: adjustUserEntries
 │   │   ├── api/
@@ -186,7 +194,8 @@ omni-incubator/
 │   │   ├── profile/subscription/page.tsx   # Subscription status + portal
 │   │   ├── library/page.tsx        # Product grid with filter/search/sort/pagination
 │   │   ├── library/[slug]/page.tsx # E-book detail page (with billing integration)
-│   │   ├── marketplace/page.tsx    # Coming Soon + service grid + email capture
+│   │   ├── marketplace/page.tsx    # Service card grid — active/approved only; entry badges; links to detail
+│   │   ├── marketplace/[slug]/page.tsx # Service detail page (ISR 60s)
 │   │   ├── pricing/page.tsx        # Membership pricing page with toggle
 │   │   ├── ebooks/download/[id]/page.tsx   # Download page (auth-protected)
 │   │   ├── confirm/[token]/page.tsx        # Email confirmation — 5 states
@@ -201,6 +210,7 @@ omni-incubator/
 │   │   ├── admin/                  # Admin-specific components (sidebar, forms, tables)
 │   │   ├── billing/                # Billing components (checkout button, download button, pricing cards, order history, subscription management)
 │   │   ├── sweepstakes/            # EntryBadge, MultiplierBanner, LeadCapturePopup, LeadCapturePopupWrapper, CountdownTimer
+│   │   ├── marketplace/            # ServiceApproveButton (admin approve action), ServiceWaitlistCTA (coming-soon lead capture toggle)
 │   │   ├── free/                   # LeadCaptureFormFree (sample product lead capture form)
 │   │   ├── library/                # Library page components (card, filters, search, sort, load-more)
 │   │   ├── ebook/                  # E-book detail components (detail view, preview button, checkout integration)
@@ -233,7 +243,7 @@ omni-incubator/
 │   │   └── utils.ts                # cn() Tailwind class merge utility
 │   └── middleware.ts               # Session refresh + route protection (includes /ebooks/download)
 ├── supabase/
-│   ├── migrations/                 # 18 timestamped SQL migration files
+│   ├── migrations/                 # 19 timestamped SQL migration files
 │   ├── storage.md                  # Storage bucket configuration guide
 │   └── auth-config.md              # Auth configuration guide
 ├── vercel.json                     # maxDuration: 60 for /api/webhooks/stripe

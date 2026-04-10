@@ -476,6 +476,29 @@ Regenerate the confirmation token and resend the confirmation email to a pending
 
 ---
 
+## Server Actions — Services (Phase 5)
+
+These are Next.js Server Actions (not HTTP API routes). They are called directly from client components via the Server Action binding. Auth is enforced server-side.
+
+### `approveService(id: string)`
+
+**File:** `src/app/actions/services.ts`
+**Auth:** Admin only — calls `getAdminUser()` internally; returns `{ error: string }` if the caller is not an admin.
+
+Sets `services.status = 'approved'` for the given service UUID. Called by `<ServiceApproveButton>` on the admin services list (`/admin/services`) for rows with `status='pending'`.
+
+**Returns:**
+- `{ ok: true }` — on success; also calls `revalidatePath('/admin/services')`
+- `{ error: string }` — on auth failure or DB error
+
+### `updateService(formData: FormData)` — extended in Phase 5
+
+**File:** `src/app/actions/services.ts`
+
+Extended to read and persist `custom_entry_amount` (integer, optional, must be ≥ 1 if provided). Validates the value before writing. Revalidates `/admin/services` and `/marketplace` on success.
+
+---
+
 ## Library
 
 ### `GET /api/library/products`

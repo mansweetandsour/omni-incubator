@@ -11,7 +11,7 @@ export default async function EditServicePage({ params }: EditServicePageProps) 
 
   const { data: service } = await adminClient
     .from('services')
-    .select('id, slug, title, description, long_description, rate_type, rate_cents, rate_label, category, tags, status, is_coming_soon')
+    .select('id, slug, title, description, long_description, rate_type, rate_cents, rate_label, category, tags, status, is_coming_soon, custom_entry_amount')
     .eq('id', id)
     .single()
 

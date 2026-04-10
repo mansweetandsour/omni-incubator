@@ -3,11 +3,23 @@ import { buttonVariants } from '@/components/ui/button'
 import { ServiceTable } from '@/components/admin/service-table'
 import { adminClient } from '@/lib/supabase/admin'
 
-export default async function AdminServicesPage() {
-  const { data: services } = await adminClient
+interface AdminServicesPageProps {
+  searchParams: Promise<{ status?: string }>
+}
+
+export default async function AdminServicesPage({ searchParams }: AdminServicesPageProps) {
+  const { status: statusFilter } = await searchParams
+
+  const baseQuery = adminClient
     .from('services')
     .select('id, title, category, rate_type, rate_cents, rate_label, status, is_coming_soon, deleted_at')
     .order('created_at', { ascending: false })
+
+  const { data: services } = statusFilter === 'pending'
+    ? await baseQuery.eq('status', 'pending').is('deleted_at', null)
+    : statusFilter === 'active'
+      ? await baseQuery.eq('status', 'active').is('deleted_at', null)
+      : await baseQuery
 
   return (
     <div className="space-y-6">
@@ -17,10 +29,33 @@ export default async function AdminServicesPage() {
           New Service
         </Link>
       </div>
+
+      {/* Status filter */}
+      <div className="flex gap-2 flex-wrap">
+        <Link
+          href="/admin/services"
+          className={buttonVariants({ variant: !statusFilter ? 'default' : 'outline', size: 'sm' })}
+        >
+          All
+        </Link>
+        <Link
+          href="/admin/services?status=pending"
+          className={buttonVariants({ variant: statusFilter === 'pending' ? 'default' : 'outline', size: 'sm' })}
+        >
+          Pending Approval
+        </Link>
+        <Link
+          href="/admin/services?status=active"
+          className={buttonVariants({ variant: statusFilter === 'active' ? 'default' : 'outline', size: 'sm' })}
+        >
+          Active
+        </Link>
+      </div>
+
       {services && services.length > 0 ? (
         <ServiceTable services={services} />
       ) : (
-        <p className="text-zinc-500">No services yet. Create your first one.</p>
+        <p className="text-zinc-500">No services found.</p>
       )}
     </div>
   )
