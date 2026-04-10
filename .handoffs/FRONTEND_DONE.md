@@ -1,116 +1,79 @@
-# FRONTEND_DONE.md — Phase 2: Products & Library
-
-**Status:** DONE
+# FRONTEND_DONE.md — Phase 3: Billing
+**Frontend Agent Output**
 **Date:** 2026-04-09
+**Phase:** 3 — Billing
+**Status:** COMPLETE
 
 ---
 
-## Summary
+## Build Verification
 
-All [FRONTEND] tasks F1–F24 have been implemented. TypeScript (`tsc --noEmit`) passes with 0 errors. ESLint passes with 0 errors. Production build (`npm run build`) completes successfully with all 27 routes rendered.
-
----
-
-## Files Created or Modified
-
-### New Files
-
-| File | Task | Description |
-|---|---|---|
-| `src/app/(admin)/layout.tsx` | F1 | Admin shell — sidebar + main content, no Navbar/Footer |
-| `src/app/(admin)/admin/page.tsx` | F3 | Redirect → `/admin/products` |
-| `src/app/(admin)/admin/products/page.tsx` | F7 | Admin products list (Server Component) |
-| `src/app/(admin)/admin/products/new/page.tsx` | F8 | Create product page |
-| `src/app/(admin)/admin/products/[id]/edit/page.tsx` | F9 | Edit product page |
-| `src/app/(admin)/admin/services/page.tsx` | F12 | Admin services list (Server Component) |
-| `src/app/(admin)/admin/services/new/page.tsx` | F13 | Create service page |
-| `src/app/(admin)/admin/services/[id]/edit/page.tsx` | F14 | Edit service page |
-| `src/app/(admin)/admin/ebooks/page.tsx` | F3 | Placeholder |
-| `src/app/(admin)/admin/sample-products/page.tsx` | F3 | Placeholder |
-| `src/app/(admin)/admin/orders/page.tsx` | F3 | Placeholder |
-| `src/app/(admin)/admin/users/page.tsx` | F3 | Placeholder |
-| `src/app/(admin)/admin/sweepstakes/page.tsx` | F3 | Placeholder |
-| `src/app/(admin)/admin/coupons/page.tsx` | F3 | Placeholder |
-| `src/app/(admin)/admin/settings/page.tsx` | F3 | Placeholder |
-| `src/components/admin/admin-sidebar.tsx` | F2 | Admin sidebar nav (Server Component) |
-| `src/components/admin/file-upload-section.tsx` | F4 | File upload UI (Client Component) |
-| `src/components/admin/product-form.tsx` | F5 | Full product create/edit form (Client Component) |
-| `src/components/admin/product-table.tsx` | F6 | Products list table (Client Component) |
-| `src/components/admin/service-form.tsx` | F11 | Full service create/edit form (Client Component) |
-| `src/components/admin/service-table.tsx` | F10 | Services list table (Client Component) |
-| `src/components/library/product-card.tsx` | F15 | Product card (Server Component) |
-| `src/components/library/filter-sidebar.tsx` | F16 | Filter checkboxes with URL update (Client Component) |
-| `src/components/library/search-input.tsx` | F17 | Debounced search input (Client Component) |
-| `src/components/library/sort-select.tsx` | F18 | Sort dropdown (Client Component) |
-| `src/components/library/load-more-button.tsx` | F19 | Load more + appended cards (Client Component) |
-| `src/components/ebook/preview-download-button.tsx` | F21 | Preview PDF link styled as button (Client Component) |
-| `src/components/ebook/ebook-detail.tsx` | F22 | Full e-book detail + upsell toggle (Client Component) |
-| `src/app/library/[slug]/page.tsx` | F23 | E-book detail Server Component |
-
-### Modified Files
-
-| File | Change |
-|---|---|
-| `src/app/library/page.tsx` | F20 — Replaced placeholder with full library listing (Server Component, ISR 60s) |
-| `src/app/marketplace/page.tsx` | F24 — Replaced placeholder with Coming Soon hero, service grid, email capture |
+- `npx tsc --noEmit` — **0 errors**
+- `npm run build` — **Success** (43 routes compiled, all dynamic)
 
 ---
 
-## Pages and Routes Implemented
+## Files Created
 
-| Route | Type | Description |
-|---|---|---|
-| `/admin` | Dynamic (redirect) | Redirects to `/admin/products` |
-| `/admin/products` | Dynamic (Server) | All products table with edit/archive |
-| `/admin/products/new` | Dynamic (Server) | Create product form |
-| `/admin/products/[id]/edit` | Dynamic (Server) | Edit product form with file uploads |
-| `/admin/services` | Dynamic (Server) | All services table with edit/archive |
-| `/admin/services/new` | Dynamic (Server) | Create service form |
-| `/admin/services/[id]/edit` | Dynamic (Server) | Edit service form |
-| `/admin/ebooks` | Dynamic (Server) | Placeholder |
-| `/admin/sample-products` | Dynamic (Server) | Placeholder |
-| `/admin/orders` | Dynamic (Server) | Placeholder |
-| `/admin/users` | Dynamic (Server) | Placeholder |
-| `/admin/sweepstakes` | Dynamic (Server) | Placeholder |
-| `/admin/coupons` | Dynamic (Server) | Placeholder |
-| `/admin/settings` | Dynamic (Server) | Placeholder |
-| `/library` | Dynamic (ISR 60s) | Product grid with search, filter, sort, load-more |
-| `/library/[slug]` | Dynamic (ISR 60s) | E-book detail with markdown, upsell toggle |
-| `/marketplace` | Dynamic (ISR 60s) | Coming Soon hero, service cards, email capture |
+### Billing Components
+- `src/components/billing/download-button.tsx` — `<DownloadButton>` anchor styled as button, href → `/api/ebooks/{ebookId}/download` (307 redirect follows automatically)
+- `src/components/billing/manage-subscription-btn.tsx` — `<ManageSubscriptionBtn>` Client Component, POSTs to `/api/subscription/portal`, redirects to Stripe portal, Loader2 spinner + inline error
+- `src/components/billing/checkout-button.tsx` — `<CheckoutButton>` Client Component, handles ebook-only and ebook+membership checkout, unauthenticated renders as login redirect link, loading state + inline error
+- `src/components/billing/pricing-cards.tsx` — `<PricingCards>` Client Component, monthly/annual toggle, $15/$129 hardcoded, Join Now → `/api/checkout/membership`, member detection, error display
+- `src/components/billing/order-history.tsx` — `<OrderHistory>` Client Component, shadcn Table, expandable rows showing line items, Load More pagination fetching `/api/profile/orders?page=N`
+
+### Pages — New
+- `src/app/ebooks/download/[id]/page.tsx` — Server Component, auth redirect if no user, ownership check via adminClient, checkout success banner on `?checkout=success`, `<DownloadButton>` for owners, "You do not own this e-book" for non-owners
+- `src/app/profile/orders/page.tsx` — Server Component, initial page fetch via adminClient, renders `<OrderHistory>`
+- `src/app/profile/ebooks/page.tsx` — Server Component, JS deduplication, ebook grid with cover images and `<DownloadButton>`
+- `src/app/profile/subscription/page.tsx` — Server Component, subscription status badge (active/trialing/past_due/canceled), trial end date, next billing date, cancel_at_period_end warning, `<ManageSubscriptionBtn>`, no-subscription prompt to `/pricing`
 
 ---
 
-## How to Run Locally
+## Files Modified
+
+- `src/app/pricing/page.tsx` — Replaced placeholder with full Server Component: `force-dynamic`, fetches user + `isActiveMember`, passes to `<PricingCards>`
+- `src/app/library/[slug]/page.tsx` — Added `isActiveMember` call (guarded by user existence), changed revalidate to `0` (force-dynamic), passes `ebookId`, `isMember`, `userId` to `<EbookDetail>`
+- `src/components/ebook/ebook-detail.tsx` — Updated `EbookDetailProps` with `ebookId`, `isMember`, `userId`; replaced disabled Buy placeholder with `<CheckoutButton>`; added membership upsell checkbox; added coupon code input with 500ms debounce + blur validation against `/api/coupons/validate`; shows `<DownloadButton>` instead of Buy for owners; shows member price when `isMember`
+
+---
+
+## Routes Implemented
+
+| Route | Type | Auth | Notes |
+|---|---|---|---|
+| `/pricing` | Server Component | Optional | Membership pricing page with toggle |
+| `/library/[slug]` | Server Component | Optional | Updated with full billing integration |
+| `/ebooks/download/[id]` | Server Component | Required (middleware) | Download + checkout success page |
+| `/profile/orders` | Server Component | Required (middleware) | Paginated order history |
+| `/profile/ebooks` | Server Component | Required (middleware) | Owned ebooks grid |
+| `/profile/subscription` | Server Component | Required (middleware) | Subscription status + portal |
+
+---
+
+## Navigation
+
+The navbar dropdown (`src/components/layout/navbar-auth.tsx`) already contained links for "My E-books" (`/profile/ebooks`), "Orders" (`/profile/orders`), and "Subscription" (`/profile/subscription`) from Phase 1. No changes were needed.
+
+---
+
+## Running Locally
 
 ```bash
-npm run dev   # http://localhost:3000
+# Ensure .env.local has all Phase 3 vars (see .env.example)
+npm run dev
+# Visit http://localhost:3000/pricing, /library/{slug}, /profile/orders, etc.
 ```
-
-Admin routes at `/admin/*`. Auth protection is handled by `src/middleware.ts` (Phase 1 — no changes needed).
 
 ---
 
 ## Deviations from SPEC.md
 
-### 1. Button `asChild` prop not available
-The installed `Button` component (`@base-ui/react/button`) does not expose an `asChild` prop unlike the typical shadcn/ui Radix-based variant. Replaced all `<Button asChild><Link>` patterns with `<Link className={buttonVariants(...)}>` using the exported `buttonVariants` helper. Functionally and visually identical.
+### 1. `revalidate = 0` on `/library/[slug]`
+Changed from `revalidate = 60` to `0` so member price detection and ownership checks are always fresh at request time. SPEC §3.7 required `force-dynamic` for the pricing page; library detail page benefits equally since it now calls `isActiveMember`.
 
-### 2. Admin sidebar — no active-link highlighting
-Per SPEC §10 decision note: "simply no active state in Phase 2 (acceptable)." Implemented as a pure Server Component with static links. No deviation from the accepted approach.
+### 2. No shadcn Alert component for success banner
+The project does not have a shadcn Alert component installed. Used a semantically equivalent `div` with emerald border/background pattern consistent with the rest of the codebase.
 
-### 3. Price input in product form
-The `ProductForm` displays price as a dollar-value input (e.g. "29.99"). On submit, the component converts to cents via `Math.round(parseFloat(value) * 100)` and overwrites the `price_cents` FormData field before passing to the Server Action. The Server Action reads it as an integer string — this is consistent with SPEC §14.
-
----
-
-## Verification Results
-
-```
-node_modules/typescript/bin/tsc --noEmit                          → 0 errors
-node node_modules/eslint/bin/eslint.js src/                       → 0 errors
-NEXT_PUBLIC_SUPABASE_URL=https://dummy.supabase.co \
-  NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy \
-  SUPABASE_SERVICE_ROLE_KEY=dummy-service-role-key \
-  NEXT_PUBLIC_SITE_URL=https://omniincubator.org \
-  node node_modules/next/dist/bin/next build                      → Build succeeded, 27 routes
-```
+### 3. `size="lg"` on PricingCards join button
+SPEC did not specify a button size. Used `size="lg"` for the primary CTA for visual prominence — no functional impact.

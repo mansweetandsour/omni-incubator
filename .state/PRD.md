@@ -1,115 +1,203 @@
-# PRD — Phase 2: Products & Library
+# PRD — Phase 3: Billing
 
 ## Phase Goal
-Build the admin product management system and the public e-book library so that: an admin can create e-book products with files and cover images, and any visitor can browse, filter, search, and preview e-books on the public library page.
+Build the complete purchase and subscription flow so that a user can buy an e-book, join a membership (with 7-day free trial), or buy both together. Webhooks process Stripe events into orders, subscriptions, and download access. Transactional emails send on key events. Users can manage their subscription, view orders, download purchased e-books.
 
 ## Requirements
 
-### R1 — Admin Layout
-- `/admin` route group with a sidebar navigation layout separate from the public site layout
-- Sidebar links: Dashboard (placeholder), Products, E-books, Sample Products, Services, Orders, Users, Sweepstakes, Coupons, Settings (all but Products and Services are placeholders for future phases)
-- Auth protection: any authenticated user who is NOT an admin (`profiles.role != 'admin'`) gets a 403 page. Unauthenticated users are redirected to `/login?next=/admin`
-- Admin middleware already exists from Phase 1 — reuse the role check
+### R1 — Stripe Customer Management
+- Utility `getOrCreateStripeCustomer(userId, email)` in `src/lib/stripe.ts`:
+  - Check `profiles.stripe_customer_id` — if exists, return it
+  - If not: `stripe.customers.create({ email, metadata: { supabase_user_id: userId } })`, update `profiles.stripe_customer_id`, return new ID
+  - Use admin Supabase client (bypasses RLS)
 
-### R2 — Admin Product CRUD (E-books)
-- List page `/admin/products`: table of all products (including inactive), sortable by created_at desc, with type badge, price, active/inactive status, edit button
-- Create/edit form at `/admin/products/new` and `/admin/products/[id]/edit`:
-  - Fields: title, description (short), long_description (markdown textarea), price_cents (shown as dollars in UI, stored as cents), cover image upload, category (dropdown: conceptual/skill/industry/startup_guide), subcategory (text), tags (tag input), operator_dependency (dropdown: physical_service/hybrid/digital_saas), scale_potential (dropdown: low/medium/high), cost_to_start (dropdown: under_5k/5k_to_50k/over_50k), custom_entry_amount (optional integer), is_active toggle, is_coming_soon toggle
-  - Slug: auto-generated from title on create (slugify, check uniqueness, append UUID fragment if conflict). Not editable by admin.
-  - product_type: always 'ebook' for this form
-  - On create: also create an `ebooks` row with file_path placeholder (actual file uploaded in R3)
-- Soft delete: archive button on list page sets `deleted_at = NOW()`
+### R2 — Member Pricing Utility
+- `isActiveMember(userId)` in `src/lib/membership.ts`:
+  - Query `subscriptions` where `user_id = userId AND status IN ('trialing', 'active')`
+  - Return boolean
+  - This function is called before checkout and on product detail pages to determine pricing tier
 
-### R3 — E-book File Upload
-- On product create/edit: file upload section for two files:
-  1. Main e-book PDF → uploaded to Supabase Storage `ebooks` bucket (private), path stored in `ebooks.file_path`
-  2. Preview PDF (optional) → uploaded to Supabase Storage `ebook-previews` bucket (public), path stored in `ebooks.preview_file_path`
-- Max file size: 100MB
-- Store raw storage path (e.g., `ebooks/{product-uuid}/{filename}.pdf`), NOT a signed URL
-- Cover image upload → `covers` bucket (public), URL stored in `products.cover_image_url`
-- Upload via API route `POST /api/admin/ebooks/[id]/upload` (multipart form) — uses admin Supabase client
+### R3 — Membership Checkout
+- `POST /api/checkout/membership`: auth required
+  - Pre-check: query subscriptions — if user already has status IN ('trialing', 'active'), return 400 with message "You already have an active membership"
+  - Body: `{ plan: 'monthly' | 'annual' }`
+  - Get/create Stripe customer
+  - Read Rewardful referral cookie `rewardful_referral` → pass as `clientReferenceId` on session
+  - Create Stripe Checkout Session:
+    - mode: 'subscription'
+    - line_items: monthly → STRIPE_MONTHLY_PRICE_ID, annual → STRIPE_ANNUAL_PRICE_ID
+    - subscription_data: { trial_period_days: 7 }
+    - allow_promotion_codes: true
+    - customer: stripe_customer_id
+    - success_url: /library?checkout=success
+    - cancel_url: /pricing?checkout=canceled
+  - Return { url: checkoutSession.url }
 
-### R4 — Stripe Product Sync
-- On admin product create: call Stripe API to create:
-  1. Stripe Product with name = product title
-  2. Stripe Price (full price) → store `stripe_price_id` on products row
-  3. Stripe Price (member price = floor(price_cents * 0.5)) → store `stripe_member_price_id` on products row
-  4. Store `stripe_product_id` on products row
-- Guard: `if (!process.env.STRIPE_SECRET_KEY) skip Stripe sync` — products can be created without Stripe keys configured, Stripe sync runs when keys are set
-- On price update: create new Stripe Prices (Stripe prices are immutable), update stored IDs
-- This sync is idempotent: if product already has stripe_product_id, skip creation
+### R4 — E-book Checkout
+- `POST /api/checkout/ebook`: auth required
+  - Body: `{ ebookId: string, couponCode?: string }`
+  - Determine pricing: if `isActiveMember(userId)` → use `stripe_member_price_id`, else use `stripe_price_id`
+  - If couponCode provided: validate via internal coupon lookup (case-insensitive, active, not expired, not over max_uses). Store coupon_id in session metadata.
+  - Read Rewardful referral cookie
+  - Create Stripe Checkout Session:
+    - mode: 'payment'
+    - line_items: [{ price: priceId, quantity: 1 }]
+    - allow_promotion_codes: true
+    - customer: stripe_customer_id
+    - success_url: /ebooks/download/{ebookId}?checkout=success
+    - cancel_url: /library/{slug}?checkout=canceled
+    - metadata: { ebook_id: ebookId, coupon_id, coupon_code, user_id }
+  - No duplicate purchase block — same e-book can be bought multiple times
+  - Return { url: checkoutSession.url }
 
-### R5 — Library Page
-- `/library` (server-rendered with search params for filters + ISR revalidate 60s)
-- Product grid: 12 products per page, load more button
-- Filter sidebar:
-  - Category (multi-select checkboxes): Conceptual Learning, Skill Learning, Industry Guides, Startup 0→1 Guides
-  - Operator Dependency (multi-select): Physical/Service, Hybrid, Digital/SaaS
-  - Scale Potential (multi-select): Low, Medium, High
-  - Cost to Start (multi-select): Under $5K, $5K–$50K, Over $50K
-  - Filter logic: OR within each group, AND between groups
-- Sort dropdown: Newest (default), Price Low→High, Price High→Low, Title A→Z
-- Search: text input, debounced 300ms, searches title + tags + description (client-side filter OR server-side with search param — Architect decides)
-- Product card: cover image (3:4 aspect ratio), title, author(s) from ebooks.authors, category badge, price display (full price), entry badge placeholder (shows static "Earn entries" text — live calculation wired in Phase 4A)
-- Empty state: "No e-books match your filters" with reset filters button
-- Only show products where `is_active = true AND deleted_at IS NULL`
-- Public page: no auth required
+### R5 — E-book + Membership Upsell Checkout
+- `POST /api/checkout/ebook-with-membership`: auth required
+  - Body: `{ ebookId: string, plan: 'monthly' | 'annual' }`
+  - Pre-check: no existing active subscription
+  - Get/create Stripe customer
+  - Read Rewardful referral cookie
+  - Create Stripe Checkout Session:
+    - mode: 'subscription'
+    - line_items: [{ price: STRIPE_MONTHLY_PRICE_ID, quantity: 1 }, { price: stripe_member_price_id, quantity: 1 }]
+    - subscription_data: { trial_period_days: 7 }
+    - allow_promotion_codes: true
+    - metadata: { ebook_id: ebookId, user_id }
+  - Return { url: checkoutSession.url }
 
-### R6 — E-book Detail Page
-- `/library/[slug]` (server-rendered, ISR revalidate 60s)
-- Content: cover image, title, author(s), category badge, description, long_description (rendered markdown), tags, scale metadata (operator_dependency, scale_potential, cost_to_start)
-- Price section: full price + member price (shown as "Members: $X.XX — 50% off")
-- Preview download button → calls `/api/ebooks/[id]/preview` (public, no auth) → streams preview PDF
-- Buy CTA: button labeled "Buy — $X.XX" (placeholder — wired to checkout API in Phase 3). If user is logged in and owns this e-book, show small note "You already own this e-book" but keep the Buy button active.
-- Entry badge placeholder: static text "Earn entries with purchase" (wired to EntryBadge component in Phase 4A)
-- Membership upsell toggle: checkbox/toggle "Also join Omni Membership (+$15/mo, 7-day free trial)" — stores state locally, passed to checkout in Phase 3
+### R6 — Coupon Validation API
+- `POST /api/coupons/validate`: auth required
+  - Body: `{ code: string }`
+  - Look up coupon (case-insensitive UPPER(code) match), verify: is_active, not expired (expires_at IS NULL OR expires_at > now()), current_uses < max_uses_global (if set)
+  - Check per-user usage: query coupon_uses where coupon_id = X AND user_id = Y, count < max_uses_per_user
+  - Return: `{ valid: true, coupon: { id, entry_type, entry_value, code } }` or `{ valid: false, message: string }`
+  - Price discounts are handled by Stripe Promotion Codes natively — this endpoint only validates ENTRY BONUS coupons
 
-### R7 — Preview Download API
-- `GET /api/ebooks/[id]/preview` — public, no auth required
-- Look up ebook by product ID, get `preview_file_path`
-- If no preview_file_path: return 404
-- Stream file from `ebook-previews` bucket (public bucket — use public URL, no signed URL needed)
-- Set Content-Type: application/pdf, Content-Disposition: inline
+### R7 — Processed Events Table Migration
+- Migration file: `supabase/migrations/20240101000015_processed_stripe_events.sql`
+- Wait — this table was ALREADY included in Phase 1 migrations. Verify it exists. If not, create the migration.
 
-### R8 — Admin Services CRUD
-- `/admin/services`: list all services with status badges
-- Create/edit form: title, description, long_description, slug (auto-generated), rate_type (dropdown: hourly/fixed/monthly/custom), rate_cents (shown in dollars, nullable when rate_type=custom), rate_label (text, optional display override), category, tags, status (pending/approved/active/suspended), is_coming_soon toggle (default true)
-- All services created with `is_coming_soon = true` at launch
-- Soft delete (deleted_at)
+### R8 — Stripe Webhook Handler
+- `POST /api/webhooks/stripe`: public, no auth cookie check, Stripe signature verification
+- Verify signature: `stripe.webhooks.constructEvent(body, sig, STRIPE_WEBHOOK_SECRET)` — return 400 on failure
+- Transactional idempotency per §13.1: entire handler wrapped in a DB transaction. First operation: `INSERT INTO processed_stripe_events (event_id, event_type) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING event_id`. If no rows returned, event already processed — return 200 immediately.
+- Handle these events:
 
-### R9 — Marketplace Page
-- `/marketplace` (public page)
-- "Coming Soon" hero section with headline and description
-- Grid of service cards if any services exist (with "Coming Soon" badge on each)
-- Email capture form placeholder section: static UI only (a form that submits to `/api/lead-capture` — the API route itself is built in Phase 4A; for now, show the form UI and wire to the API route path, it will 404 gracefully until Phase 4A)
-- No auth required
+**checkout.session.completed:**
+- Look up user_id from session metadata or customer
+- If mode='payment': create Order (status=completed) + OrderItems + UserEbook row. Send ebook_purchase email. Award sweepstake entries (Phase 4A will wire this — for now, log a TODO).
+- If mode='subscription' with one-time items (combined checkout): also create Order/UserEbook for the e-book line. Set `entries_awarded_by_checkout = true` on the order.
+- On combined checkout: also handle subscription creation (upsert subscriptions row)
+
+**customer.subscription.created:**
+- Only if `status IN ('trialing', 'active')`: upsert subscriptions row. Send membership_welcome email. Subscribe to Beehiiv.
+- Skip if `status = 'incomplete'` (card declined)
+
+**customer.subscription.updated:**
+- Update subscription fields: status, current_period_start/end, cancel_at_period_end, product_id
+
+**customer.subscription.deleted:**
+- Set subscription status = 'canceled', set canceled_at. Remove from Beehiiv.
+
+**customer.subscription.trial_will_end:**
+- Send trial_ending email (fires 3 days before trial ends)
+
+**invoice.paid:**
+- Check `invoice.amount_paid > 0` (skip $0 trial invoices)
+- Skip if `invoice.billing_reason = 'subscription_update'` (proration-only, no recurring line items)
+- Check `entries_awarded_by_checkout` flag on related order (if exists) to avoid double-counting combined checkout
+- Update subscription status to 'active'
+- Create Order with `is_subscription_renewal = true`
+- Award sweepstake entries (Phase 4A — log TODO for now)
+- Send membership_charged email with entry count placeholder
+
+**invoice.payment_failed:**
+- Update subscription status to 'past_due'. Send payment_failed email.
+
+### R9 — Order Creation Logic
+- On checkout.session.completed: create orders row with:
+  - order_number (auto-generated by DB trigger)
+  - stripe_checkout_session_id
+  - user_id
+  - status: 'completed'
+  - subtotal_cents: from session.amount_subtotal
+  - discount_cents: from session.total_details.breakdown.discounts (Stripe Promotion Code discounts)
+  - total_cents: from session.amount_total
+  - is_member_discount: true if member price was used
+  - coupon_id/coupon_code from session metadata (entry bonus coupon)
+- Create order_items rows with: product_id, product_type, product_title (snapshot), quantity, unit_price_cents (actual paid), list_price_cents (full list price)
+
+### R10 — Profile: Order History
+- `GET /api/profile/orders`: auth required. Paginated (20 per page), ordered by created_at desc. Returns orders with nested order_items.
+- `/profile/orders` page: paginated list, expandable line items, order status badge, formatted date, order number display.
+
+### R11 — Profile: My E-books
+- `GET /api/profile/ebooks`: auth required. Returns distinct ebooks owned by user (deduplicated — one entry per unique ebook even if purchased multiple times). Includes ebook metadata + product title/cover.
+- `/profile/ebooks` page: grid of owned e-books with title, cover, download button.
+
+### R12 — E-book Download
+- `GET /api/ebooks/[id]/download`: auth required + ownership check (query user_ebooks where user_id = auth AND ebook_id = id)
+  - If not owned: return 403
+  - Generate signed URL (1 hour expiry) from `ebooks` bucket for `ebooks.file_path`
+  - Increment `user_ebooks.download_count`, update `last_downloaded_at`
+  - Redirect (307) to signed URL
+- `/ebooks/download/[id]` page: auth required. Fetches ebook metadata. Shows cover, title, "Download" button (hits download API). Also served as checkout success_url.
+
+### R13 — Subscription Management
+- `GET /api/profile/subscription`: auth required. Returns current subscription (status, plan, trial_end, current_period_end, cancel_at_period_end).
+- `/profile/subscription` page: shows plan name, status badge (active/trialing/canceled/past_due), trial end date (if trialing), next billing date. "Manage Subscription" button → calls POST /api/subscription/portal.
+- `POST /api/subscription/portal`: auth required. Creates Stripe billing portal session (`stripe.billingPortal.sessions.create({ customer: stripe_customer_id, return_url: /profile/subscription })`). Returns { url }. Redirect on client.
+
+### R14 — Beehiiv Integration
+- On subscription.created (status trialing/active): `POST https://api.beehiiv.com/v2/publications/{BEEHIIV_PUBLICATION_ID}/subscriptions` with `{ email, reactivate_existing: true }`
+- On subscription.deleted: `DELETE https://api.beehiiv.com/v2/publications/{BEEHIIV_PUBLICATION_ID}/subscriptions/by_email/{email}` (or equivalent unsubscribe endpoint)
+- Guard: if `!BEEHIIV_API_KEY`, log warning and skip (non-blocking)
+- Utility in `src/lib/beehiiv.ts`
+
+### R15 — Transactional Emails (Resend)
+- `src/lib/email.ts`: Resend client + `sendEmail(template, to, data)` function. Log every sent email to `email_log` table (use admin client).
+- Templates (React Email components in `src/emails/`):
+  - `EbookPurchaseEmail`: Order details, stable download link `/ebooks/download/{id}` (NOT signed URL), entries placeholder
+  - `MembershipWelcomeEmail`: What's included, trial end date, link to library
+  - `MembershipChargedEmail`: Invoice amount, next billing date, entries placeholder
+  - `TrialEndingEmail`: Trial ends in 3 days, what happens next, cancel link
+  - `PaymentFailedEmail`: Payment failed, link to Stripe Portal to update payment method
+- Guard: if `!RESEND_API_KEY`, log and skip (non-blocking for dev — real emails require configured key)
+
+### R16 — Wire Buy Buttons
+- Update `/library/[slug]` (ebook detail page): Buy button now calls `POST /api/checkout/ebook`. If user not logged in, redirect to `/login?next=/library/{slug}`. Show membership upsell toggle that switches between `/api/checkout/ebook` and `/api/checkout/ebook-with-membership`.
+- Update `/pricing` page: Add membership pricing cards with monthly/annual toggle, "Join Now" button calling `POST /api/checkout/membership`.
+- Pricing page: show $15/month and $129/year with trial messaging "Start free 7-day trial".
 
 ## Acceptance Criteria
-1. `/admin` redirects to `/admin/products` (or admin dashboard) — non-admins see 403
-2. Admin product list shows all products from DB, sortable
-3. Admin can create a new e-book product — product row + ebook row created in DB
-4. Slug is auto-generated from title on create, no duplicate slugs
-5. Cover image upload saves to `covers` bucket, URL stored in products row
-6. E-book PDF upload saves to `ebooks` bucket, path stored in ebooks.file_path
-7. Preview PDF upload saves to `ebook-previews` bucket, path stored in ebooks.preview_file_path
-8. When STRIPE_SECRET_KEY is set: creating a product creates Stripe Product + 2 Prices and stores IDs. When not set: product creates without error.
-9. `/library` renders products grid without auth
-10. Library filter sidebar correctly filters products (category OR within group, AND between groups)
-11. Library sort and pagination work correctly (12 per page, load more)
-12. Library search returns products matching title/tags/description
-13. `/library/[slug]` renders full e-book detail with all fields
-14. Preview download button on detail page calls preview API — returns PDF for products with preview_file_path
-15. `/api/ebooks/[id]/preview` returns 404 for products with no preview file
-16. Membership upsell toggle exists on detail page and persists state
-17. `/marketplace` renders Coming Soon state with any existing services listed
-18. Admin services CRUD: create/edit/delete works
-19. `npm run build` passes with no errors
-20. `npx tsc --noEmit` passes with 0 errors
+1. `POST /api/checkout/membership` returns 400 if user already has active subscription
+2. `POST /api/checkout/membership` creates Stripe Checkout session and returns URL
+3. `POST /api/checkout/ebook` applies member pricing for active members, full price for others
+4. `POST /api/coupons/validate` returns valid:true for valid unexpired coupon, valid:false for invalid/expired/maxed
+5. Webhook handler verifies Stripe signature — returns 400 on invalid sig
+6. Webhook handler is idempotent: same event_id processed twice → second call returns 200 immediately without side effects
+7. `checkout.session.completed` (payment mode): creates order, order_items, user_ebooks row
+8. `customer.subscription.created`: creates subscriptions row, sends welcome email (if trialing/active)
+9. `customer.subscription.updated`: updates subscription fields in DB
+10. `customer.subscription.deleted`: sets status='canceled'
+11. `invoice.paid` (amount>0): creates renewal order with is_subscription_renewal=true, sends charged email
+12. `invoice.paid` ($0 trial): no order created, no entries awarded
+13. `invoice.payment_failed`: sets subscription status='past_due', sends payment failed email
+14. `GET /api/ebooks/[id]/download` returns 403 if user doesn't own the ebook
+15. `GET /api/ebooks/[id]/download` generates signed URL and increments download_count for owned ebook
+16. `/ebooks/download/[id]` page loads with ebook info and download button
+17. `/profile/orders` shows paginated order history
+18. `/profile/ebooks` shows deduplicated owned e-books with download buttons
+19. `/profile/subscription` shows current plan status and Manage Subscription button
+20. `POST /api/subscription/portal` creates Stripe portal session and returns URL
+21. `/pricing` page renders with monthly/annual toggle and working Join Now buttons
+22. `/library/[slug]` buy button triggers checkout flow
+23. `npm run build` passes with no errors
+24. `npx tsc --noEmit` passes with 0 errors
 
-## Out of Scope for Phase 2
-- Actual checkout flow (Buy button is a placeholder — Phase 3)
-- Live entry badge calculations (Phase 4A)
-- Lead capture API handler (Phase 4A)
-- Admin dashboard statistics (Phase 4B)
-- Homepage content beyond the placeholder (Phase 6)
-- Any billing, subscription, or webhook code
+## Out of Scope for Phase 3
+- Sweepstake entry awarding (webhook stubs log TODO — Phase 4A wires this)
+- Lead capture API (Phase 4A)
+- Entry badge live calculations (Phase 4A)
+- Admin order management pages (Phase 4B)
+- Admin user management (Phase 4B)
+- Production Stripe live keys (EXTERNAL TASK E13)

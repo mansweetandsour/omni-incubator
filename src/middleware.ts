@@ -40,6 +40,16 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Protected: /ebooks/download/* — require auth
+  if (pathname.startsWith('/ebooks/download')) {
+    if (!user) {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/login'
+      redirectUrl.searchParams.set('next', pathname)
+      return NextResponse.redirect(redirectUrl)
+    }
+  }
+
   // Protected: /admin/* — require auth + admin role
   if (pathname.startsWith('/admin')) {
     if (!user) {

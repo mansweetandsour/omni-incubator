@@ -60,6 +60,37 @@ export async function syncStripeProduct(productId: string): Promise<void> {
     .eq('id', productId)
 }
 
+export async function getOrCreateStripeCustomer(userId: string, email: string): Promise<string> {
+  const stripe = getStripe()
+  if (!stripe) throw new Error('Stripe not configured')
+
+  const { data: profile } = await adminClient
+    .from('profiles')
+    .select('stripe_customer_id')
+    .eq('id', userId)
+    .single()
+
+  if (profile?.stripe_customer_id) return profile.stripe_customer_id
+
+  const customer = await stripe.customers.create({
+    email,
+    metadata: { supabase_user_id: userId },
+  })
+
+  await adminClient
+    .from('profiles')
+    .update({ stripe_customer_id: customer.id })
+    .eq('id', userId)
+
+  return customer.id
+}
+
+export function getStripeInstance(): Stripe {
+  const s = getStripe()
+  if (!s) throw new Error('Stripe not configured — STRIPE_SECRET_KEY missing')
+  return s
+}
+
 export async function syncStripeNewPrices(
   productId: string,
   memberPriceCents: number

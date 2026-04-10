@@ -58,6 +58,236 @@ Returns a `307` redirect to the public CDN URL of the e-book's preview PDF.
 
 ---
 
+## Checkout
+
+### `POST /api/checkout/membership`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Create a Stripe Checkout Session for a membership subscription (monthly or annual). Returns 400 if the user already has an active or trialing subscription.
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `plan` | string | Yes | `monthly` or `annual` |
+
+**Response (200):**
+```json
+{ "url": "https://checkout.stripe.com/..." }
+```
+
+The client should redirect to `url`. The session includes a 7-day free trial, `allow_promotion_codes: true`, and Rewardful `client_reference_id` tracking if `NEXT_PUBLIC_REWARDFUL_API_KEY` is set.
+
+**Error responses:** `400` (already subscribed, invalid plan), `401`, `500`.
+
+---
+
+### `POST /api/checkout/ebook`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Create a Stripe Checkout Session for an e-book one-time purchase. Member price (`stripe_member_price_id`) is used automatically if the user has an active or trialing subscription. Accepts an optional coupon code which is validated server-side before the session is created.
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ebookId` | string (UUID) | Yes | `products.id` |
+| `couponCode` | string | No | Coupon code to apply (case-insensitive) |
+
+**Response (200):**
+```json
+{ "url": "https://checkout.stripe.com/..." }
+```
+
+**Error responses:** `400` (invalid coupon, product not found), `401`, `500`.
+
+---
+
+### `POST /api/checkout/ebook-with-membership`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Create a combined Stripe Checkout Session that purchases an e-book and starts a membership subscription in a single session. Used when the user opts in to the membership upsell on the library detail page.
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ebookId` | string (UUID) | Yes | `products.id` |
+| `plan` | string | Yes | `monthly` or `annual` |
+
+**Response (200):**
+```json
+{ "url": "https://checkout.stripe.com/..." }
+```
+
+**Error responses:** `400`, `401`, `500`.
+
+---
+
+## Coupons
+
+### `POST /api/coupons/validate`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Validate a coupon code. Checks: exists, `is_active = true`, not expired (`expires_at`), global usage limit not reached, per-user usage limit not reached. Lookup is case-insensitive.
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `code` | string | Yes | Coupon code entered by the user |
+
+**Response (200) — valid:**
+```json
+{
+  "valid": true,
+  "coupon": { "id": "uuid", "entry_type": "percent", "entry_value": 20, "code": "SAVE20" }
+}
+```
+
+**Response (200) — invalid:**
+```json
+{ "valid": false, "message": "Coupon has expired" }
+```
+
+**Error responses:** `401`, `500`.
+
+---
+
+## Webhooks
+
+### `POST /api/webhooks/stripe`
+
+**Auth:** None (Stripe signature verification via `STRIPE_WEBHOOK_SECRET`). Returns 400 on invalid signature.
+
+Idempotent Stripe webhook handler. Processes the following events:
+
+| Event | Effect |
+|---|---|
+| `checkout.session.completed` (payment) | INSERT order + order_items + user_ebooks; send ebook purchase email |
+| `checkout.session.completed` (subscription) | INSERT order + order_items + user_ebooks + UPSERT subscriptions |
+| `customer.subscription.created` | UPSERT subscriptions; send membership welcome email; subscribe to Beehiiv |
+| `customer.subscription.updated` | UPDATE subscriptions |
+| `customer.subscription.deleted` | SET subscriptions.status = canceled; unsubscribe from Beehiiv |
+| `customer.subscription.trial_will_end` | Send trial ending email |
+| `invoice.paid` | UPDATE subscriptions.status = active; INSERT renewal order; send membership charged email |
+| `invoice.payment_failed` | UPDATE subscriptions.status = past_due; send payment failed email |
+
+Idempotency is enforced via the `claim_stripe_event` Postgres RPC (see ADR-007). Duplicate event deliveries return 200 immediately without side effects.
+
+**Important:** This route reads the request body as raw text (`request.text()`) to preserve the exact bytes required for Stripe signature verification. Next.js App Router Route Handlers do not apply a body parser, so no middleware configuration is needed.
+
+**Response (200):**
+```json
+{ "received": true }
+```
+
+**Error responses:** `400` (invalid signature or missing webhook secret).
+
+---
+
+## Profile
+
+### `GET /api/profile/orders`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Paginated order history for the authenticated user, with nested order line items.
+
+**Query parameters:**
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | Page number (1-indexed). Page size is 20. |
+
+**Response (200):**
+```json
+{
+  "orders": [{ "id": "uuid", "created_at": "...", "total_cents": 1500, "order_items": [...] }],
+  "hasMore": false,
+  "total": 3
+}
+```
+
+---
+
+### `GET /api/profile/ebooks`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Deduplicated list of e-books owned by the authenticated user, with product metadata (title, cover, slug, authors).
+
+**Response (200):**
+```json
+[{ "ebook_id": "uuid", "title": "...", "cover_image_url": "...", "slug": "..." }]
+```
+
+---
+
+### `GET /api/profile/subscription`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Current subscription for the authenticated user, or `null` if no subscription exists.
+
+**Response (200) — active subscription:**
+```json
+{
+  "id": "uuid",
+  "status": "trialing",
+  "trial_end": "2026-04-16T00:00:00Z",
+  "current_period_end": "2026-05-09T00:00:00Z",
+  "cancel_at_period_end": false,
+  "product": { "title": "Omni Membership — Monthly" }
+}
+```
+
+**Response (200) — no subscription:**
+```json
+null
+```
+
+---
+
+## E-books — Protected
+
+### `GET /api/ebooks/[id]/download`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated, 403 if user does not own the e-book.
+
+Ownership check, then returns a `307` redirect to a 1-hour signed Supabase Storage URL for the e-book PDF. Atomically increments `user_ebooks.download_count` and updates `last_downloaded_at` as a non-blocking side effect.
+
+- `[id]` is the `products.id` (UUID).
+
+**Response:** `307` redirect to signed URL.
+
+**Error responses:** `401`, `403` (not owned), `404` (product not found), `500`.
+
+---
+
+## Subscription Management
+
+### `POST /api/subscription/portal`
+
+**Auth:** Cookie session (logged-in user). Returns 401 if unauthenticated.
+
+Create a Stripe Billing Portal session for the authenticated user. The user is redirected to Stripe's hosted portal where they can update payment methods, switch plans, or cancel. After completing actions in the portal, Stripe redirects back to `/profile/subscription`.
+
+**Request body:** None required.
+
+**Response (200):**
+```json
+{ "url": "https://billing.stripe.com/session/..." }
+```
+
+**Error responses:** `400` (no Stripe customer ID on profile), `401`, `500`.
+
+---
+
 ## Library
 
 ### `GET /api/library/products`

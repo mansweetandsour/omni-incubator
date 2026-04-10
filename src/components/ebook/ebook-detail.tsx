@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Image from 'next/image'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Badge } from '@/components/ui/badge'
 import { PreviewDownloadButton } from './preview-download-button'
+import { CheckoutButton } from '@/components/billing/checkout-button'
+import { DownloadButton } from '@/components/billing/download-button'
 import {
   CATEGORY_LABELS,
   OPERATOR_LABELS,
@@ -42,14 +44,23 @@ interface ProductDetailData {
 interface EbookDetailProps {
   product: ProductDetailData
   userOwnsEbook: boolean
+  ebookId: string
+  isMember: boolean
+  userId: string | null
 }
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-export function EbookDetail({ product, userOwnsEbook }: EbookDetailProps) {
+export function EbookDetail({ product, userOwnsEbook, ebookId, isMember, userId }: EbookDetailProps) {
   const [membershipChecked, setMembershipChecked] = useState(false)
+  const [couponCode, setCouponCode] = useState('')
+  const [couponStatus, setCouponStatus] = useState<'idle' | 'valid' | 'invalid'>('idle')
+  const [couponMessage, setCouponMessage] = useState('')
+  const [validCouponCode, setValidCouponCode] = useState<string | undefined>(undefined)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const ebook = product.ebooks
 
   const authors = ebook.authors.length > 0 ? ebook.authors.join(', ') : 'Unknown'
@@ -65,6 +76,63 @@ export function EbookDetail({ product, userOwnsEbook }: EbookDetailProps) {
     : null
 
   const hasPreview = ebook.preview_file_path && ebook.preview_file_path !== ''
+
+  const validateCoupon = async (code: string) => {
+    if (!code.trim()) {
+      setCouponStatus('idle')
+      setCouponMessage('')
+      setValidCouponCode(undefined)
+      return
+    }
+    try {
+      const res = await fetch('/api/coupons/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      })
+      const data = await res.json()
+      if (data.valid) {
+        setCouponStatus('valid')
+        setCouponMessage(`Coupon applied: ${data.coupon.entry_type} bonus`)
+        setValidCouponCode(code)
+      } else {
+        setCouponStatus('invalid')
+        setCouponMessage(data.message ?? 'Invalid coupon')
+        setValidCouponCode(undefined)
+      }
+    } catch {
+      setCouponStatus('invalid')
+      setCouponMessage('Could not validate coupon. Please try again.')
+      setValidCouponCode(undefined)
+    }
+  }
+
+  const handleCouponChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.toUpperCase()
+    setCouponCode(value)
+    setCouponStatus('idle')
+    setCouponMessage('')
+    setValidCouponCode(undefined)
+
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      validateCoupon(value)
+    }, 500)
+  }
+
+  const handleCouponBlur = () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    validateCoupon(couponCode)
+  }
+
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [])
+
+  const displayPrice = isMember ? product.member_price_cents : product.price_cents
 
   return (
     <div className="container mx-auto py-12 px-4">
@@ -139,12 +207,18 @@ export function EbookDetail({ product, userOwnsEbook }: EbookDetailProps) {
           {/* Price section */}
           <div className="rounded-lg border p-5 space-y-3 bg-zinc-50 dark:bg-zinc-900">
             <div className="flex items-baseline gap-3">
-              <span className="text-3xl font-bold">{formatPrice(product.price_cents)}</span>
-              <span className="text-sm text-zinc-500">full price</span>
+              <span className="text-3xl font-bold">{formatPrice(displayPrice)}</span>
+              {isMember ? (
+                <span className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">member price</span>
+              ) : (
+                <span className="text-sm text-zinc-500">full price</span>
+              )}
             </div>
-            <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-              Members: {formatPrice(product.member_price_cents)} — 50% off
-            </p>
+            {!isMember && (
+              <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+                Members: {formatPrice(product.member_price_cents)} — 50% off
+              </p>
+            )}
 
             {/* Entry badge */}
             <span className="inline-block text-xs text-zinc-500 italic">
@@ -152,38 +226,64 @@ export function EbookDetail({ product, userOwnsEbook }: EbookDetailProps) {
             </span>
 
             {/* Ownership note */}
-            {userOwnsEbook && (
-              <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-                You already own this e-book.
-              </p>
+            {userOwnsEbook ? (
+              <div className="space-y-2">
+                <p className="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+                  You already own this e-book.
+                </p>
+                <DownloadButton ebookId={ebookId} />
+              </div>
+            ) : (
+              <>
+                {/* Preview button */}
+                {hasPreview && (
+                  <PreviewDownloadButton productId={product.id} />
+                )}
+
+                {/* Membership upsell */}
+                {!isMember && (
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={membershipChecked}
+                      onChange={(e) => setMembershipChecked(e.target.checked)}
+                      className="h-4 w-4 rounded border-zinc-300"
+                    />
+                    <span className="text-sm text-zinc-600 dark:text-zinc-300">
+                      Also join Omni Membership (+$15/mo, 7-day free trial)
+                    </span>
+                  </label>
+                )}
+
+                {/* Coupon code input */}
+                <div className="space-y-1">
+                  <input
+                    type="text"
+                    value={couponCode}
+                    onChange={handleCouponChange}
+                    onBlur={handleCouponBlur}
+                    placeholder="Enter coupon code (optional)"
+                    className="w-full rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 px-3 py-2 text-sm placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                  />
+                  {couponStatus === 'valid' && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">{couponMessage}</p>
+                  )}
+                  {couponStatus === 'invalid' && (
+                    <p className="text-xs text-red-500">{couponMessage}</p>
+                  )}
+                </div>
+
+                {/* Buy button */}
+                <CheckoutButton
+                  ebookId={ebookId}
+                  userId={userId}
+                  slug={product.slug}
+                  isMember={isMember}
+                  withMembership={membershipChecked && !isMember}
+                  couponCode={couponStatus === 'valid' ? validCouponCode : undefined}
+                />
+              </>
             )}
-
-            {/* Preview button */}
-            {hasPreview && (
-              <PreviewDownloadButton productId={product.id} />
-            )}
-
-            {/* Buy button (placeholder) */}
-            <button
-              type="button"
-              disabled
-              className="w-full rounded-md bg-zinc-900 dark:bg-white px-4 py-3 text-sm font-semibold text-white dark:text-zinc-900 opacity-50 cursor-not-allowed"
-            >
-              Buy — {formatPrice(product.price_cents)} (Coming Soon)
-            </button>
-
-            {/* Membership upsell */}
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={membershipChecked}
-                onChange={(e) => setMembershipChecked(e.target.checked)}
-                className="h-4 w-4 rounded border-zinc-300"
-              />
-              <span className="text-sm text-zinc-600 dark:text-zinc-300">
-                Also join Omni Membership (+$15/mo, 7-day free trial)
-              </span>
-            </label>
           </div>
         </div>
       </div>

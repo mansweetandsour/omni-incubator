@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import { isActiveMember } from '@/lib/membership'
 import { EbookDetail } from '@/components/ebook/ebook-detail'
 
-export const revalidate = 60
+export const revalidate = 0
 
 interface EbookDetailPageProps {
   params: Promise<{ slug: string }>
@@ -28,11 +29,12 @@ export default async function EbookDetailPage({ params }: EbookDetailPageProps) 
 
   if (!ebook) notFound()
 
-  // Ownership check
+  // Auth check
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
+  // Ownership check
   let userOwnsEbook = false
   if (user) {
     const { data: ue } = await supabase
@@ -44,10 +46,21 @@ export default async function EbookDetailPage({ params }: EbookDetailPageProps) 
     userOwnsEbook = !!ue
   }
 
+  // Member check
+  const isMember = user ? await isActiveMember(user.id) : false
+
   const productWithEbook = {
     ...product,
     ebooks: ebook,
   }
 
-  return <EbookDetail product={productWithEbook} userOwnsEbook={userOwnsEbook} />
+  return (
+    <EbookDetail
+      product={productWithEbook}
+      userOwnsEbook={userOwnsEbook}
+      ebookId={ebook.id}
+      isMember={isMember}
+      userId={user?.id ?? null}
+    />
+  )
 }

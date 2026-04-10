@@ -1,14 +1,14 @@
-# DEPLOY_DONE.md — Phase 2: Products & Library
+# DEPLOY_DONE.md — Phase 3: Billing
 
 **Result: APPROVED**
 **Date:** 2026-04-09
-**Phase:** 2 of 6
+**Phase:** 3 — Billing
 
 ---
 
 ## Summary
 
-Phase 2 is build-clean and infra-ready. No new environment variables were introduced. No new infrastructure is required. Two new npm dependencies (`react-markdown`, `remark-gfm`) are consistent between `package.json` and `package-lock.json`. No hardcoded secrets found. `.gitignore` coverage is complete.
+Phase 3 is build-clean and infra-ready. All 7 new environment variables are documented in `.env.local.example`. No hardcoded secrets found. `vercel.json` correctly extends the webhook function timeout. The webhook route uses `request.text()` for raw body access, which is correct for Stripe signature verification — no body parser override is needed in Next.js App Router. Three external tasks (E4, E6, E9/E18) are blocking for Phase 4A.
 
 ---
 
@@ -16,52 +16,31 @@ Phase 2 is build-clean and infra-ready. No new environment variables were introd
 
 ### Task 1 — Build Clean Verification
 
-**PASS — Confirmed by QA (not re-run)**
+**PASS — Confirmed by QA**
 
-QA re-validation (2026-04-09) confirmed:
+QA Agent confirmed:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://dummy.supabase.co \
 NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy \
-SUPABASE_SERVICE_ROLE_KEY=dummy_service_role \
+SUPABASE_SERVICE_ROLE_KEY=dummy \
 NEXT_PUBLIC_SITE_URL=https://omniincubator.org \
 node node_modules/next/dist/bin/next build
 
-→ ✓ Compiled successfully in 4.9s
-→ ✓ Generating static pages (27/27)
+→ ✓ Compiled successfully in 5.8s
+→ 34 routes compiled (all dynamic)
 → EXIT_CODE: 0
 ```
 
-TypeScript: `tsc --noEmit` → 0 errors. All 27 routes compiled. QA is the authoritative source for this check; no re-run is required.
+`npx tsc --noEmit` → 0 errors. QA is the authoritative source; no re-run required.
 
 ---
 
-### Task 2 — `.gitignore` Audit
+### Task 2 — `vercel.json` maxDuration Verification
 
-**PASS — No changes required**
+**PASS**
 
-Phase 2 introduced no new artifact types. Existing `.gitignore` coverage is complete:
-
-| Pattern | What it covers |
-|---|---|
-| `.env*` | `.env.local`, `.env.production`, any env variant |
-| `/.next/` | Next.js build output |
-| `/node_modules` | npm dependencies |
-| `.vercel` | Vercel CLI artifacts |
-| `.supabase/` | Supabase CLI local dev state (added in Phase 1) |
-| `*.tsbuildinfo` | TypeScript incremental build cache |
-
-No new file types (uploads, generated files, local storage artifacts) are written to the working tree by Phase 2 code. File uploads go directly to Supabase Storage via the API.
-
----
-
-### Task 3 — Phase 3 Stripe Webhook — `vercel.json` Recommendation
-
-**ADVISORY — No action required now**
-
-Phase 3 will add `POST /api/webhooks/stripe`. Stripe webhooks send large payloads and can take several seconds to process (subscription events, invoice events). Vercel's default function timeout for Hobby and Pro plans is 10s and 60s respectively.
-
-**Recommendation for Phase 3:** Create `vercel.json` at the project root with:
+`vercel.json` exists at project root with:
 
 ```json
 {
@@ -73,65 +52,106 @@ Phase 3 will add `POST /api/webhooks/stripe`. Stripe webhooks send large payload
 }
 ```
 
-This should be added by the Backend or DevOps agent when the Stripe webhook route is built in Phase 3, not before.
+This extends the Stripe webhook handler timeout to 60 seconds (Vercel Pro default is 60s; this makes it explicit and ensures the setting survives if the plan changes). All other routes use the default 10s timeout. No changes required.
 
 ---
 
-### Task 4 — Secrets Audit
+### Task 3 — `.env.local.example` Coverage
+
+**PASS — All Phase 3 vars documented**
+
+`.env.local.example` contains all 7 new Phase 3 environment variables with inline comments:
+
+| Variable | Guard behavior | Present in .env.local.example |
+|---|---|---|
+| `STRIPE_WEBHOOK_SECRET` | Hard fail — webhook returns 400 if absent | Yes |
+| `STRIPE_MONTHLY_PRICE_ID` | Hard fail — checkout/membership 500s if absent | Yes |
+| `STRIPE_ANNUAL_PRICE_ID` | Hard fail — checkout/membership 500s if absent | Yes |
+| `RESEND_API_KEY` | Non-blocking — email skipped + warning logged | Yes |
+| `RESEND_FROM_EMAIL` | Optional — defaults to `noreply@omniincubator.org` | Yes |
+| `BEEHIIV_API_KEY` | Non-blocking — Beehiiv calls skipped + warning logged | Yes |
+| `BEEHIIV_PUBLICATION_ID` | Non-blocking — Beehiiv calls skipped + warning logged | Yes |
+
+Note: `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are also present in `.env.local.example` in anticipation of Phase 4A rate limiting. These are not used in Phase 3 code.
+
+---
+
+### Task 4 — Hardcoded Secrets Audit
 
 **PASS — No hardcoded secrets found**
 
-Scanned `src/` for common hardcoded secret patterns:
-- Stripe key prefixes: `sk_live_`, `sk_test_`, `pk_live_`, `pk_test_`, `rk_live_`
-- Generic patterns: inline `password=`, `secret=`, `api_key=` with non-env values
-- AWS key patterns: `AKIA[0-9A-Z]`
-- Google API key pattern: `AIza`
+Scanned `src/` for:
+- Stripe key prefixes: `sk_live_`, `sk_test_`, `pk_live_`, `pk_test_`, `whsec_`
+- Resend key prefix: `re_` (with significant suffix length)
+- Generic inline patterns
 
 **Result: 0 matches.**
 
-All secrets in Phase 2 code are accessed exclusively via `process.env.*`. `src/lib/stripe.ts` reads `process.env.STRIPE_SECRET_KEY` at call time inside the lazy factory function — not at module evaluation time. No values are inlined.
+All secrets accessed exclusively via `process.env.*`. No values inlined in source.
 
 ---
 
-### Task 5 — `package.json` / `package-lock.json` Consistency
+### Task 5 — Webhook Raw Body Verification
 
-**PASS**
+**PASS — No body parser interference**
 
-Both files exist:
-- `package.json` — present, well-formed
-- `package-lock.json` — present, 17,312 lines (consistent with a full dependency tree)
+File: `src/app/api/webhooks/stripe/route.ts` line 72:
+```typescript
+const rawBody = await request.text()
+```
 
-Phase 2 additions verified in both files:
+The route reads the request body as raw text before passing it to `stripe.webhooks.constructEvent(Buffer.from(rawBody), sig, STRIPE_WEBHOOK_SECRET)`. This is the correct approach for Stripe signature verification.
 
-| Package | `package.json` version | `package-lock.json` resolved |
+**Why no middleware configuration is needed:** Next.js App Router Route Handlers do not have a global body parser (unlike the Pages Router's `bodyParser` config). The `Request` object received by the route handler contains the raw stream. `request.text()` reads it directly without transformation. No `export const config = { api: { bodyParser: false } }` override is required or applicable in the App Router.
+
+No middleware in `src/middleware.ts` or elsewhere intercepts or transforms request bodies. Confirmed: the webhook route is correct as implemented.
+
+---
+
+### Task 6 — New Migrations
+
+**NOTED**
+
+Two new migrations were added in Phase 3:
+
+| File | Purpose |
+|---|---|
+| `supabase/migrations/20240101000015_claim_stripe_event_fn.sql` | `claim_stripe_event` RPC for idempotent webhook processing |
+| `supabase/migrations/20240101000016_increment_download_count_fn.sql` | `increment_download_count` RPC for atomic download counter |
+
+Total migrations: 16. These must be applied to the production Supabase project via `supabase db push` before Phase 3 code is deployed.
+
+---
+
+## New Environment Variables (Phase 3)
+
+| Variable | Required | Source |
 |---|---|---|
-| `react-markdown` | `^10.1.0` | `react-markdown-10.1.0.tgz` |
-| `remark-gfm` | `^4.0.1` | `remark-gfm-4.0.1.tgz` |
-| `stripe` | `^22.0.1` | present (installed in Phase 1 as a future dependency) |
+| `STRIPE_WEBHOOK_SECRET` | Yes — hard fail | Stripe Dashboard → Developers → Webhooks → endpoint signing secret |
+| `STRIPE_MONTHLY_PRICE_ID` | Yes — hard fail | Stripe Dashboard → Products → price ID |
+| `STRIPE_ANNUAL_PRICE_ID` | Yes — hard fail | Stripe Dashboard → Products → price ID |
+| `RESEND_API_KEY` | No — non-blocking | Resend Dashboard → API Keys |
+| `RESEND_FROM_EMAIL` | No — optional | Configured verified sender address |
+| `BEEHIIV_API_KEY` | No — non-blocking | Beehiiv Dashboard → Settings → Integrations → API |
+| `BEEHIIV_PUBLICATION_ID` | No — non-blocking | Beehiiv Dashboard → publication ID |
 
-No mismatches detected.
-
----
-
-## New or Changed Environment Variables
-
-**None.** Phase 2 introduced no new environment variables.
-
-`STRIPE_SECRET_KEY` was already documented in `.env.local.example` from Phase 1 (added in anticipation of Phase 3). Phase 2's `src/lib/stripe.ts` reads it but adds no new Stripe-related variables.
+Add all variables to Vercel Dashboard → Settings → Environment Variables before promoting Phase 3 to production.
 
 ---
 
 ## Infrastructure Resources Created or Modified
 
-**None.** Phase 2 adds API routes and Server Actions but requires no new infrastructure, no new Supabase buckets, no new database migrations, and no new cloud services.
+| Resource | Type | Change |
+|---|---|---|
+| `vercel.json` | Vercel config | Created — sets `maxDuration: 60` for webhook route |
+| `supabase/migrations/20240101000015_claim_stripe_event_fn.sql` | Postgres RPC + table | New — `processed_stripe_events` table + `claim_stripe_event` function |
+| `supabase/migrations/20240101000016_increment_download_count_fn.sql` | Postgres RPC | New — `increment_download_count` function |
 
-The three Supabase Storage buckets used by the file upload API (`ebooks`, `ebook-previews`, `covers`) were provisioned in Phase 1 per `supabase/storage.md`.
+No new Supabase Storage buckets, no new cloud services, no Docker/compose changes required.
 
 ---
 
 ## Staging / Production URLs
-
-No new deployment triggered for Phase 2 — the codebase is ready for deployment on the next push to the main branch. URLs unchanged from Phase 1:
 
 | Environment | URL |
 |---|---|
@@ -142,27 +162,34 @@ No new deployment triggered for Phase 2 — the codebase is ready for deployment
 
 ## CI/CD Pipeline
 
-No changes. Deployment is via Vercel git integration (push to `main` triggers automatic build + deploy). No GitHub Actions pipeline is configured; Vercel handles build, preview, and production promotion.
+No changes. Deployment is via Vercel git integration (push to `main` triggers build + deploy). The only new deployment artifact is `vercel.json` which Vercel reads automatically on next deployment.
 
 ---
 
 ## Rollback Procedure
 
-1. In Vercel dashboard → project → **Deployments** tab
+1. In Vercel Dashboard → project → **Deployments** tab
 2. Locate the previous known-good deployment
 3. Click three-dot menu → **Promote to Production**
 4. Traffic is instantly re-routed — no rebuild required
 
-No database migrations were included in Phase 2, so a rollback requires no DB changes.
+**Database rollback note:** Phase 3 includes 2 new migrations. Rolling back application code while leaving the migrations applied is safe — the new tables/functions are additive and the old code does not reference them. If a full DB rollback is needed, run:
+```sql
+DROP FUNCTION IF EXISTS public.claim_stripe_event(text, text);
+DROP TABLE IF EXISTS public.processed_stripe_events;
+DROP FUNCTION IF EXISTS public.increment_download_count(uuid, uuid);
+```
+Only do this if application code is also being rolled back.
 
 ---
 
-## Blocked On (External Tasks — Phase 3)
+## External Tasks Blocking Phase 4A
 
-| Task | Description | Required by |
+| Task | Description | Consequence if missing |
 |---|---|---|
-| **E4** | Create Stripe account, get test-mode API keys | Phase 3 (Stripe checkout, webhooks) |
-| **E5** | Create Stripe Products and Prices for membership | Phase 3 (membership checkout) |
-| **E6** | Configure Stripe webhook endpoint in Stripe Dashboard | Phase 3 (webhook handler) |
+| **E4** | Stripe test-mode API keys in production env | Checkout sessions cannot be created; webhooks return 400 |
+| **E6** | Stripe webhook endpoint configured in Stripe Dashboard | No webhook events delivered; orders/subscriptions not created |
+| **E9/E18** | Resend account + domain verified | All transactional emails (purchase receipts, membership welcome, trial ending, payment failed) silently skipped; Phase 4A lead capture confirmation emails will not deliver |
+| **E8** | Beehiiv account + API keys | New members not subscribed to newsletter; cancellations not unsubscribed |
 
-Phase 2 codebase is complete and deployment-ready. Proceed to Phase 3 when E4 and E5 are done.
+E4 and E6 are hard-blocking for any billing functionality. E8, E9/E18 are soft-blocking but must be resolved before Phase 4A launch.

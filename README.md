@@ -93,6 +93,18 @@ Authentication (Email OTP + Google OAuth), Supabase setup, middleware, profile m
 - **Preview download API** (`/api/ebooks/[id]/preview`) — public 307 redirect to CDN URL for preview PDFs.
 - **Library products API** (`/api/library/products`) — paginated + filtered product listing for Load More.
 
+### Phase 3 — Billing
+- **Checkout APIs** — `POST /api/checkout/membership` (subscription with 7-day trial + Rewardful support), `POST /api/checkout/ebook` (member/non-member price detection + coupon), `POST /api/checkout/ebook-with-membership` (combined single-session checkout).
+- **Stripe webhook handler** (`/api/webhooks/stripe`) — idempotent processor for 7 event types using `claim_stripe_event` Postgres RPC. Handles `checkout.session.completed`, `customer.subscription.*`, `invoice.paid`, `invoice.payment_failed`. Raw body preserved for signature verification; `vercel.json` sets `maxDuration: 60`.
+- **Beehiiv integration** (`src/lib/beehiiv.ts`) — auto-subscribe on membership creation, auto-unsubscribe on cancellation. Non-blocking; no-ops when keys are absent.
+- **Resend email system** (`src/lib/email.tsx`) — 5 React Email templates (ebook purchase, membership welcome, membership charged, trial ending, payment failed). Logs to `email_log` table; non-blocking.
+- **Coupon validation** (`src/lib/coupon.ts`, `POST /api/coupons/validate`) — case-insensitive lookup, active/expiry/global-limit/per-user-limit checks.
+- **Profile pages** — `/profile/orders` (paginated with expandable line items), `/profile/ebooks` (owned ebook grid with download buttons), `/profile/subscription` (status badge, trial/billing dates, Manage Subscription portal link).
+- **Download page** (`/ebooks/download/[id]`) — ownership check, checkout success banner, `<DownloadButton>` for owners.
+- **Pricing page** (`/pricing`) — monthly/annual toggle, $15/$129, member detection, 7-day trial CTA.
+- **Signed download API** (`GET /api/ebooks/[id]/download`) — ownership check, 1-hour Supabase Storage signed URL, atomic download count increment via `increment_download_count` RPC, 307 redirect.
+- **Billing portal** (`POST /api/subscription/portal`) — creates Stripe Billing Portal session for subscription self-management.
+
 ## Project Structure
 
 ```
@@ -109,10 +121,20 @@ omni-incubator/
 │   │   │   ├── products.ts         # Server Actions: createProduct, updateProduct, archiveProduct
 │   │   │   └── services.ts         # Server Actions: createService, updateService, archiveService
 │   │   ├── api/
-│   │   │   ├── admin/ebooks/[id]/upload/route.ts  # Multipart file upload (admin only)
-│   │   │   ├── ebooks/[id]/preview/route.ts       # Public preview PDF redirect
-│   │   │   ├── library/products/route.ts          # Paginated library listing
-│   │   │   └── auth/callback/route.ts             # Google OAuth PKCE callback
+│   │   │   ├── admin/ebooks/[id]/upload/route.ts        # Multipart file upload (admin only)
+│   │   │   ├── ebooks/[id]/preview/route.ts             # Public preview PDF redirect
+│   │   │   ├── ebooks/[id]/download/route.ts            # Ownership check + signed URL + 307 redirect
+│   │   │   ├── library/products/route.ts                # Paginated library listing
+│   │   │   ├── auth/callback/route.ts                   # Google OAuth PKCE callback
+│   │   │   ├── checkout/membership/route.ts             # Subscription checkout session
+│   │   │   ├── checkout/ebook/route.ts                  # Ebook payment checkout session
+│   │   │   ├── checkout/ebook-with-membership/route.ts  # Combined checkout session
+│   │   │   ├── coupons/validate/route.ts                # Coupon validation
+│   │   │   ├── webhooks/stripe/route.ts                 # Stripe webhook handler (idempotent)
+│   │   │   ├── profile/orders/route.ts                  # Paginated order history
+│   │   │   ├── profile/ebooks/route.ts                  # Owned ebook list
+│   │   │   ├── profile/subscription/route.ts            # Subscription status
+│   │   │   └── subscription/portal/route.ts             # Stripe Billing Portal session
 │   │   ├── layout.tsx              # Root layout — navbar, footer, providers
 │   │   ├── page.tsx                # Homepage (placeholder, Phase 6 content)
 │   │   ├── globals.css             # Tailwind directives + shadcn/ui CSS variables
@@ -121,17 +143,22 @@ omni-incubator/
 │   │   ├── 403/page.tsx            # 403 Forbidden (admin access denied)
 │   │   ├── login/page.tsx          # Email OTP + Google OAuth
 │   │   ├── profile/page.tsx        # Profile view + edit form
+│   │   ├── profile/orders/page.tsx         # Paginated order history
+│   │   ├── profile/ebooks/page.tsx         # Owned ebooks grid
+│   │   ├── profile/subscription/page.tsx   # Subscription status + portal
 │   │   ├── library/page.tsx        # Product grid with filter/search/sort/pagination
-│   │   ├── library/[slug]/page.tsx # E-book detail page
+│   │   ├── library/[slug]/page.tsx # E-book detail page (with billing integration)
 │   │   ├── marketplace/page.tsx    # Coming Soon + service grid + email capture
-│   │   ├── pricing/page.tsx        # Placeholder (Phase 3)
+│   │   ├── pricing/page.tsx        # Membership pricing page with toggle
+│   │   ├── ebooks/download/[id]/page.tsx   # Download page (auth-protected)
 │   │   ├── sweepstakes/page.tsx    # Placeholder (Phase 4A)
 │   │   ├── privacy/page.tsx        # Placeholder (Phase 6)
 │   │   └── terms/page.tsx          # Placeholder (Phase 6)
 │   ├── components/
 │   │   ├── admin/                  # Admin-specific components (sidebar, forms, tables)
+│   │   ├── billing/                # Billing components (checkout button, download button, pricing cards, order history, subscription management)
 │   │   ├── library/                # Library page components (card, filters, search, sort, load-more)
-│   │   ├── ebook/                  # E-book detail components (detail view, preview button)
+│   │   ├── ebook/                  # E-book detail components (detail view, preview button, checkout integration)
 │   │   ├── auth/
 │   │   │   └── LoginForm.tsx       # Login state machine (client component)
 │   │   ├── layout/
@@ -143,6 +170,7 @@ omni-incubator/
 │   │   │   └── profile-form.tsx    # Profile edit form with avatar upload (client)
 │   │   ├── providers.tsx           # next-themes ThemeProvider wrapper
 │   │   └── ui/                     # shadcn/ui auto-generated components
+│   ├── emails/                     # React Email templates (ebook-purchase, membership-welcome, membership-charged, trial-ending, payment-failed)
 │   ├── lib/
 │   │   ├── supabase/
 │   │   │   ├── client.ts           # Browser Supabase client
@@ -151,13 +179,18 @@ omni-incubator/
 │   │   ├── utils/
 │   │   │   ├── slugify.ts          # Slug generation utility
 │   │   │   └── product-labels.ts   # Display label maps for category/scale/cost enums
-│   │   ├── stripe.ts               # Lazy Stripe singleton + sync helpers (server-only)
+│   │   ├── stripe.ts               # Lazy Stripe singleton + sync helpers + getOrCreateStripeCustomer
+│   │   ├── membership.ts           # isActiveMember(userId) — server-only
+│   │   ├── beehiiv.ts              # subscribeToBeehiiv / unsubscribeFromBeehiiv — non-blocking
+│   │   ├── email.tsx               # sendEmail(template, to, data) — Resend + email_log — non-blocking
+│   │   ├── coupon.ts               # validateCouponCode(code, userId) — shared coupon helper
 │   │   └── utils.ts                # cn() Tailwind class merge utility
-│   └── middleware.ts               # Session refresh + route protection
+│   └── middleware.ts               # Session refresh + route protection (includes /ebooks/download)
 ├── supabase/
-│   ├── migrations/                 # 14 timestamped SQL migration files
+│   ├── migrations/                 # 16 timestamped SQL migration files
 │   ├── storage.md                  # Storage bucket configuration guide
 │   └── auth-config.md              # Auth configuration guide
+├── vercel.json                     # maxDuration: 60 for /api/webhooks/stripe
 ├── docs/
 │   ├── adr/                        # Architectural Decision Records
 │   └── runbooks/                   # Operational runbooks
@@ -186,4 +219,7 @@ All required variables are documented in `.env.local.example` with inline commen
 - [ADR-004: shadcn/ui component library](docs/adr/ADR-004-shadcn-ui.md)
 - [ADR-005: Server Actions for admin forms](docs/adr/ADR-005-server-actions-admin-forms.md)
 - [ADR-006: Lazy Stripe singleton](docs/adr/ADR-006-lazy-stripe-singleton.md)
+- [ADR-007: Webhook idempotency via Postgres RPC](docs/adr/ADR-007-webhook-idempotency.md)
+- [ADR-008: Stripe v22 API adaptation](docs/adr/ADR-008-stripe-v22-adaptation.md)
 - [API Reference](docs/api-reference.md)
+- [Stripe webhook setup runbook](docs/runbooks/stripe-webhook-setup.md)

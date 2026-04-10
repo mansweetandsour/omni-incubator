@@ -1,116 +1,157 @@
-# BACKEND_DONE.md — Phase 2: Products & Library
-
-**Status:** DONE
+# BACKEND_DONE.md — Phase 3: Billing
+**Backend Agent Output**
 **Date:** 2026-04-09
+**Phase:** 3 — Billing
+**Status:** COMPLETE
 
 ---
 
-## Summary
+## Build Verification
 
-All [BACKEND] tasks B1–B9 have been implemented. TypeScript (`tsc --noEmit`) passes with 0 errors. ESLint passes with 0 errors. No migrations required (Phase 2 adds no schema changes).
-
----
-
-## Files Created or Modified
-
-### New Files
-
-| File | Task | Description |
-|---|---|---|
-| `src/lib/utils/slugify.ts` | B2 | Slug generation utility — lowercase, replace non-alphanumeric with `-`, collapse/trim |
-| `src/lib/utils/product-labels.ts` | B3 | `CATEGORY_LABELS`, `OPERATOR_LABELS`, `SCALE_LABELS`, `COST_LABELS` display maps |
-| `src/lib/stripe.ts` | B4 | Stripe singleton + `syncStripeProduct` + `syncStripeNewPrices` helpers (server-only) |
-| `src/app/actions/products.ts` | B5 | Server Actions: `createProduct`, `updateProduct`, `archiveProduct` |
-| `src/app/actions/services.ts` | B6 | Server Actions: `createService`, `updateService`, `archiveService` |
-| `src/app/api/admin/ebooks/[id]/upload/route.ts` | B7 | POST multipart upload for ebook main PDF, preview PDF, cover image |
-| `src/app/api/ebooks/[id]/preview/route.ts` | B8 | GET public preview — 307 redirect to CDN URL |
-| `src/app/api/library/products/route.ts` | B9 | GET paginated + filtered product listing for library Load More |
-
-### Modified Files
-
-| File | Change |
-|---|---|
-| `package.json` | Added `react-markdown@^10.1.0` and `remark-gfm@^4.0.1` (B1) |
+- `npx tsc --noEmit` — **0 errors**
+- `npm run build` — **Success** (35 routes compiled, all dynamic)
 
 ---
 
-## API Endpoints Implemented
+## Files Created
+
+### Migrations
+- `supabase/migrations/20240101000015_claim_stripe_event_fn.sql` — `claim_stripe_event` RPC for idempotent webhook processing
+- `supabase/migrations/20240101000016_increment_download_count_fn.sql` — `increment_download_count` RPC for atomic download counting
+
+### Library Files
+- `src/lib/membership.ts` — `isActiveMember(userId)` server-only function
+- `src/lib/beehiiv.ts` — `subscribeToBeehiiv(email)` and `unsubscribeFromBeehiiv(email)` with non-blocking guards
+- `src/lib/email.tsx` — `sendEmail(template, to, data, userId?)` with Resend integration + email_log
+- `src/lib/coupon.ts` — `validateCouponCode(code, userId)` shared helper (see Spec Deviations)
+
+### React Email Templates
+- `src/emails/ebook-purchase.tsx` — EbookPurchaseEmail (props: ebookTitle, downloadUrl, orderNumber, totalCents)
+- `src/emails/membership-welcome.tsx` — MembershipWelcomeEmail (props: displayName, trialEndDate, libraryUrl)
+- `src/emails/membership-charged.tsx` — MembershipChargedEmail (props: amountCents, nextBillingDate)
+- `src/emails/trial-ending.tsx` — TrialEndingEmail (props: trialEndDate, portalUrl)
+- `src/emails/payment-failed.tsx` — PaymentFailedEmail (props: portalUrl)
+
+### API Routes
+- `src/app/api/checkout/membership/route.ts` — POST /api/checkout/membership
+- `src/app/api/checkout/ebook/route.ts` — POST /api/checkout/ebook
+- `src/app/api/checkout/ebook-with-membership/route.ts` — POST /api/checkout/ebook-with-membership
+- `src/app/api/coupons/validate/route.ts` — POST /api/coupons/validate
+- `src/app/api/webhooks/stripe/route.ts` — POST /api/webhooks/stripe (full webhook handler)
+- `src/app/api/profile/orders/route.ts` — GET /api/profile/orders
+- `src/app/api/profile/ebooks/route.ts` — GET /api/profile/ebooks
+- `src/app/api/profile/subscription/route.ts` — GET /api/profile/subscription
+- `src/app/api/ebooks/[id]/download/route.ts` — GET /api/ebooks/[id]/download
+- `src/app/api/subscription/portal/route.ts` — POST /api/subscription/portal
+
+### Config
+- `vercel.json` — maxDuration: 60 for `/api/webhooks/stripe`
+- `.env.example` — All 7 new environment variables documented with comments
+
+---
+
+## Files Modified
+
+- `src/lib/stripe.ts` — Appended `getOrCreateStripeCustomer(userId, email)` and `getStripeInstance()` exports; existing code untouched
+- `src/middleware.ts` — Added `/ebooks/download` protection block between `/profile` and `/admin` guards
+
+---
+
+## Endpoints Implemented
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/api/admin/ebooks/[id]/upload` | Admin only (cookie auth + profiles.role='admin') | Multipart upload for `type=main` (PDF → `ebooks` private bucket), `type=preview` (PDF → `ebook-previews` public bucket), or `type=cover` (image → `covers` public bucket). MIME validation and 100MB size limit enforced. Updates DB after upload. Returns `{ path, url? }`. |
-| GET | `/api/ebooks/[id]/preview` | None (public) | Looks up `ebooks.preview_file_path` by `product_id`. Returns 404 if no row or no preview. Otherwise issues 307 redirect to public CDN URL. |
-| GET | `/api/library/products` | None (public) | Paginated product listing. Params: `page`, `q`, `category`, `operator_dependency`, `scale_potential`, `cost_to_start`, `sort`. Page size 12. Returns `{ products: ProductCard[], hasMore, total }`. |
+| POST | /api/checkout/membership | Cookie | Create Stripe subscription checkout (monthly/annual, 7-day trial, Rewardful support) |
+| POST | /api/checkout/ebook | Cookie | Create Stripe payment checkout with optional coupon validation, member price detection |
+| POST | /api/checkout/ebook-with-membership | Cookie | Combined subscription+ebook checkout in single Stripe session |
+| POST | /api/coupons/validate | Cookie | Validate coupon: active, expiry, global limit, per-user limit checks |
+| POST | /api/webhooks/stripe | None (sig) | Idempotent webhook handler for 7 Stripe event types |
+| GET | /api/profile/orders | Cookie | Paginated order history with nested order_items (page param, 20/page) |
+| GET | /api/profile/ebooks | Cookie | Deduplicated list of owned ebooks with product metadata |
+| GET | /api/profile/subscription | Cookie | Current subscription status (trialing/active/past_due/canceled) or null |
+| GET | /api/ebooks/[id]/download | Cookie | Ownership check + 1hr signed URL + download count increment, 307 redirect |
+| POST | /api/subscription/portal | Cookie | Create Stripe billing portal session |
 
 ---
 
-## Server Actions
+## Webhook Events Handled
 
-| Action | Returns on success | Returns on failure |
+| Event | DB Side Effects | External (fire-and-forget) |
 |---|---|---|
-| `createProduct(formData)` | `{ id: string, slug: string }` | `{ error: string }` |
-| `updateProduct(id, formData)` | `{ ok: true, priceChanged: boolean }` | `{ error: string }` |
-| `archiveProduct(id)` | `{ ok: true }` | `{ error: string }` |
-| `createService(formData)` | `{ id: string, slug: string }` | `{ error: string }` |
-| `updateService(id, formData)` | `{ ok: true }` | `{ error: string }` |
-| `archiveService(id)` | `{ ok: true }` | `{ error: string }` |
-
----
-
-## How to Run Locally
-
-No changes to dev server setup:
-
-```bash
-npm run dev   # starts on http://localhost:3000
-```
-
-`STRIPE_SECRET_KEY` is optional — Stripe sync skips silently if absent.
+| checkout.session.completed (payment) | INSERT order + order_items + user_ebooks | sendEmail('ebook_purchase') |
+| checkout.session.completed (subscription) | INSERT order + order_items + user_ebooks + UPSERT subscriptions | — |
+| customer.subscription.created | UPSERT subscriptions | sendEmail('membership_welcome'), subscribeToBeehiiv |
+| customer.subscription.updated | UPDATE subscriptions | — |
+| customer.subscription.deleted | UPDATE subscriptions status=canceled | unsubscribeFromBeehiiv |
+| customer.subscription.trial_will_end | — | sendEmail('trial_ending') |
+| invoice.paid | UPDATE subscriptions status=active, INSERT orders (renewal) | sendEmail('membership_charged') |
+| invoice.payment_failed | UPDATE subscriptions status=past_due | sendEmail('payment_failed') |
 
 ---
 
 ## Spec Deviations
 
-### 1. Stripe apiVersion updated from `2024-06-20` to `2026-03-25.dahlia`
-SPEC §8 specified `apiVersion: '2024-06-20'` but `stripe@22.0.1` (installed) only accepts `'2026-03-25.dahlia'` as the latest API version. Using the older string caused `tsc` to error with `Type '"2024-06-20"' is not assignable to type '"2026-03-25.dahlia"'`. Updated to the current version required by the installed SDK.
+### 1. Coupon validation extracted to shared helper
+Created `src/lib/coupon.ts` with `validateCouponCode()` instead of duplicating inline in both `checkout/ebook/route.ts` and `coupons/validate/route.ts`. Both routes call the same helper. This was explicitly noted in TASKS.md B9 as "Backend agent's choice."
 
-### 2. Tags search and `total` count accuracy
-Per SPEC §11: tags filtering is done in JS after the DB query. The `total` count returned in the API response reflects the DB-filtered count (title + description ILIKE), not the JS-filtered count (which also checks tags). At Phase 2 scale this is acceptable and matches the SPEC's documented approach. A Supabase RPC with raw SQL would be needed for exact counts.
+### 2. Stripe v22 API structural differences
+The SPEC was written against an older Stripe API shape. The installed `stripe@22.0.1` uses a different structure:
 
-### 3. Admin auth helper uses discriminated union
-The `getAdminUser()` helper returns `{ ok: false, error: string } | { ok: true, userId: string }` for clean TypeScript narrowing. Functionally equivalent to the SPEC pattern.
+| SPEC reference | Actual v22 location |
+|---|---|
+| `sub.current_period_start` | `sub.items.data[0].current_period_start` |
+| `sub.current_period_end` | `sub.items.data[0].current_period_end` |
+| `invoice.subscription` | `invoice.parent.subscription_details.subscription` |
+| `line.type === 'invoiceitem'` | `line.parent.type === 'invoice_item_details'` |
+
+Added helper `getSubPeriod(sub)` to extract period dates from first subscription item. Added `getInvoiceSubscriptionId(invoice)` to extract subscription ID from nested `parent` field. Used `isAllProration(invoice)` checking `parent.type`.
+
+### 3. `invoice.paid` subscription-not-found is non-fatal
+If `invoice.paid` fires before `customer.subscription.created` (race condition), the subscription row won't exist in our DB yet. Rather than returning 500 (which causes Stripe to retry and may create duplicate records later), we log a warning and return 200 (`break` out of switch). The subscription.created handler will create the row when it arrives.
+
+### 4. `increment_download_count` fire-and-forget pattern
+Supabase PostgREST builder does not expose a `.catch()` method. Used `void rpc(...).then(({ error }) => { if (error) console.error(...) })` pattern for non-blocking execution.
 
 ---
 
-## Verification Results
+## B2 — Membership Product UUIDs
 
+UUIDs are dynamic (generated at DB initialization). To retrieve them after `supabase db push`:
+```sql
+SELECT id, type, slug FROM products WHERE type IN ('membership_monthly', 'membership_annual');
 ```
-node_modules/typescript/bin/tsc --noEmit   → 0 errors
-node_modules/eslint/bin/eslint.js src/     → 0 errors
-```
+
+The webhook handler resolves these dynamically via `resolveProductIdFromPriceId()`:
+1. Matches Stripe price ID against `STRIPE_MONTHLY_PRICE_ID` / `STRIPE_ANNUAL_PRICE_ID` env vars
+2. Queries `products.type = 'membership_monthly'` or `'membership_annual'`
+3. Fallback: queries by `stripe_price_id` or `stripe_member_price_id` columns
 
 ---
 
-## Post-QA Fixes
+## Environment Variables (Phase 3 Additions)
 
-**Date:** 2026-04-09
+| Variable | Required | Guard |
+|---|---|---|
+| `STRIPE_WEBHOOK_SECRET` | Hard fail | Webhook returns 400 without this |
+| `STRIPE_MONTHLY_PRICE_ID` | Hard fail | Checkout 500s without this |
+| `STRIPE_ANNUAL_PRICE_ID` | Hard fail | Checkout 500s without this |
+| `RESEND_API_KEY` | Non-blocking | Email skipped + warning logged if absent |
+| `RESEND_FROM_EMAIL` | Optional | Defaults to noreply@omniincubator.org |
+| `BEEHIIV_API_KEY` | Non-blocking | Beehiiv calls skipped + warning logged if absent |
+| `BEEHIIV_PUBLICATION_ID` | Non-blocking | Beehiiv calls skipped + warning logged if absent |
 
-### DEFECT-1 Fixed — `src/lib/stripe.ts`: Eager singleton → lazy factory
+---
 
-**Problem:** `new Stripe(process.env.STRIPE_SECRET_KEY!, ...)` was called at module evaluation time. When `STRIPE_SECRET_KEY` is absent the Stripe SDK throws immediately, before any guard code runs.
+## Running Locally
 
-**Fix:** Removed the top-level `stripe` export. Introduced a private `_stripe` variable and a `getStripe(): Stripe | null` function that returns `null` when the key is absent and lazily constructs the singleton on first call when the key is present. Both `syncStripeProduct` and `syncStripeNewPrices` now call `getStripe()` and early-return if the result is `null`, replacing the previous `if (!process.env.STRIPE_SECRET_KEY) return` guards.
+```bash
+# Copy and fill env vars
+cp .env.example .env.local
 
-### DEFECT-2 Fixed — `src/app/api/admin/ebooks/[id]/upload/route.ts`: Double extension on cover storage path
+# Start local Stripe webhook forwarding
+stripe listen --forward-to localhost:3000/api/webhooks/stripe
+# Copy the whsec_... value to STRIPE_WEBHOOK_SECRET in .env.local
 
-**Problem:** The cover storage path was constructed as `` `covers/${productId}/cover-${filename}.${ext}` `` where `filename` already contained the extension (e.g. `photo.jpg`), producing `cover-photo.jpg.jpg`.
-
-**Fix:** Added `const baseName = filename.replace(/\.[^.]+$/, '')` to strip the existing extension before constructing the path, yielding the correct `cover-photo.jpg`.
-
-### Post-fix verification
-
+# Start dev server
+npm run dev
 ```
-node_modules/typescript/bin/tsc --noEmit   → 0 errors
-```
-
-Build attempt with dummy env vars compiled successfully (Turbopack: ✓ Compiled successfully in 4.8s, TypeScript: Finished). The subsequent `collect page data` step errored on `supabaseKey is required` — this is a pre-existing env bootstrapping issue at build time (admin Supabase client requires `SUPABASE_SERVICE_ROLE_KEY` at static generation), unrelated to either defect fixed in this patch.

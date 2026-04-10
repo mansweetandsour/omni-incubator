@@ -1,9 +1,8 @@
-# DOCS_DONE.md — Phase 2: Products & Library
-
-**Overall result: PASS**
-
+# DOCS_DONE.md — Phase 3: Billing
+**Docs Agent Output**
 **Date:** 2026-04-09
-**Phase:** 2 of 6
+**Phase:** 3 — Billing
+**Overall result: PASS**
 
 ---
 
@@ -11,34 +10,33 @@
 
 | File | Change |
 |---|---|
-| `README.md` | Added "What's Been Built" section covering Phase 1 and Phase 2 (admin CRUD, Stripe sync, file upload, library, e-book detail, marketplace). Expanded Project Structure tree to reflect all new files and directories from Phase 2. Added ADR-005, ADR-006, and API reference to Key Documentation list. |
-| `docs/runbooks/runbook-external-tasks.md` | Added note to E4 and E5 entries flagging them as needed before Phase 3 begins (Phase 2 is now complete). |
-
----
-
-## Files Created
-
-| File | Description |
-|---|---|
-| `docs/adr/ADR-005-server-actions-admin-forms.md` | Why Server Actions were chosen over API routes for admin product/service CRUD |
-| `docs/adr/ADR-006-lazy-stripe-singleton.md` | Why lazy init was chosen over eager; documents the null guard pattern and fire-and-forget call sites |
-| `docs/api-reference.md` | Documents all three Phase 2 API routes: `POST /api/admin/ebooks/[id]/upload`, `GET /api/ebooks/[id]/preview`, `GET /api/library/products` |
+| `README.md` | Added Phase 3 to "What's Been Built"; updated Project Structure to include all new API routes, pages, components (`billing/`), lib files (`membership.ts`, `beehiiv.ts`, `email.tsx`, `coupon.ts`), `emails/` directory, and `vercel.json`; updated Key Documentation links to include ADR-007, ADR-008, and the webhook setup runbook |
+| `docs/api-reference.md` | Added all Phase 3 API endpoints: `POST /api/checkout/membership`, `POST /api/checkout/ebook`, `POST /api/checkout/ebook-with-membership`, `POST /api/coupons/validate`, `POST /api/webhooks/stripe`, `GET /api/profile/orders`, `GET /api/profile/ebooks`, `GET /api/profile/subscription`, `GET /api/ebooks/[id]/download`, `POST /api/subscription/portal` |
+| `docs/runbooks/runbook-external-tasks.md` | Updated E8 (Beehiiv), E9 (Resend), E18 (Resend domain) blocking status to "needed before Phase 4A" with explanation of what is silently skipped without each key |
 
 ---
 
 ## ADRs Created
 
-| Title | File |
+| Title | Path |
 |---|---|
-| ADR-005: Server Actions for Admin Forms | `docs/adr/ADR-005-server-actions-admin-forms.md` |
-| ADR-006: Lazy Stripe Singleton with Null Guard | `docs/adr/ADR-006-lazy-stripe-singleton.md` |
+| ADR-007: Webhook Idempotency via Postgres RPC | `docs/adr/ADR-007-webhook-idempotency.md` |
+| ADR-008: Stripe v22 API Adaptation | `docs/adr/ADR-008-stripe-v22-adaptation.md` |
 
 ---
 
-## Documentation Debt
+## Runbooks Created
 
-| Item | Reason deferred |
+| Title | Path |
 |---|---|
-| Stripe sync status visibility | `syncStripeProduct` and `syncStripeNewPrices` are fire-and-forget. No admin UI or logging surface shows whether sync succeeded for a given product. Phase 3 should add visibility (e.g. `stripe_sync_status` column). |
-| Tags count accuracy in library API | `total` in `GET /api/library/products` reflects DB-filtered count only; tag matches are JS-applied post-query. Noted in api-reference.md. Exact count requires a Supabase RPC. |
-| Server Action HTTP wrapper docs | Admin Server Actions are not HTTP endpoints and are not in the API reference. If an external caller ever needs access, a wrapper route and docs will be needed. |
+| Stripe Webhook Setup | `docs/runbooks/stripe-webhook-setup.md` |
+
+Covers: configuring the Stripe webhook endpoint (E6), selecting the 7 required events, adding the signing secret to environment, verifying via Stripe Dashboard test events, using Vercel logs as an alternative to Stripe CLI (which is not installed locally), local testing instructions for when CLI is available, idempotency reprocessing procedure, and a troubleshooting table.
+
+---
+
+## Documentation Debt Flagged
+
+1. **`processed_stripe_events` table purge** — ADR-007 notes that this table grows unboundedly. A purge runbook or scheduled Supabase cron (delete rows older than 90 days) should be added in Phase 6 or as a standalone maintenance task.
+2. **Stripe live mode cutover** — E13 in `runbook-external-tasks.md` covers switching to live mode, but there is no runbook for step-by-step verification (confirm live-mode webhook signing secret, live-mode price IDs, smoke test a real checkout end-to-end). Consider adding before Phase 6 launch.
+3. **`email_log` table** — `sendEmail` logs all attempts to `email_log`. No runbook or admin UI exists for inspecting delivery failures or resending failed emails. Flag for Phase 4A or 5.

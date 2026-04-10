@@ -33,7 +33,7 @@ PRD excerpt:
   Exit criteria: Admin can create e-book products with files and covers. Public library page shows products with filters/search. Preview downloads work.
 
 ## Phase 3: Billing
-Status: PENDING
+Status: COMPLETE
 Dependencies: Phase 2 complete
 PRD excerpt:
   lib/stripe.ts utility: getOrCreateStripeCustomer(userId) — check profile, create if needed, store stripe_customer_id.

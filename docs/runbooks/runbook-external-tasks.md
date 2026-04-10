@@ -138,7 +138,7 @@ This is the only subscription management UI — no custom subscription update pa
 ---
 
 ### E8 — Create Beehiiv account, get API key and publication ID
-**Blocking:** No (deferrable — newsletter subscribe calls no-op without key)
+**Blocking:** No for Phase 3 — **needed before Phase 4A** (membership welcome/cancel Beehiiv sync is live; without keys, subscribe/unsubscribe calls are silently skipped and new members are not added to the newsletter)
 
 1. Go to [app.beehiiv.com](https://app.beehiiv.com) → Settings → Integrations → API.
 2. Copy **API key** → `BEEHIIV_API_KEY`
@@ -150,7 +150,7 @@ This is the only subscription management UI — no custom subscription update pa
 ---
 
 ### E9 — Create Resend account, verify domain, get API key
-**Blocking:** Yes for Phase 4A (confirmation emails are core to lead capture)
+**Blocking:** Yes for Phase 4A — **complete before Phase 4A begins** (transactional emails — ebook purchase receipts, membership welcome, trial ending, payment failed — are silently skipped without Resend keys; Phase 4A lead capture confirmation emails require a verified sender domain)
 
 1. Go to [resend.com](https://resend.com) → API Keys: create a key → `RESEND_API_KEY`
 2. Go to Domains: add `omniincubator.org`, follow DNS verification steps.
@@ -164,9 +164,9 @@ This is the only subscription management UI — no custom subscription update pa
 ---
 
 ### E18 — Resend domain verification (confirmed from Phase 3 requirements)
-**Blocking:** Yes for Phase 4A
+**Blocking:** Yes for Phase 4A — **complete before Phase 4A begins**
 
-This is the same action as E9. Ensure domain DNS records (SPF, DKIM, DMARC) are fully propagated before Phase 4A launch. Confirmation emails from lead capture will not be delivered without a verified sender domain.
+This is the same action as E9. Ensure domain DNS records (SPF, DKIM, DMARC) are fully propagated before Phase 4A launch. Confirmation emails from lead capture will not be delivered without a verified sender domain. DNS propagation can take up to 48 hours — complete this well in advance.
 
 - [ ] DNS records propagated and verified in Resend dashboard
 
