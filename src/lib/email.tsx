@@ -7,6 +7,8 @@ import { MembershipWelcomeEmail, type MembershipWelcomeEmailProps } from '@/emai
 import { MembershipChargedEmail, type MembershipChargedEmailProps } from '@/emails/membership-charged'
 import { TrialEndingEmail, type TrialEndingEmailProps } from '@/emails/trial-ending'
 import { PaymentFailedEmail, type PaymentFailedEmailProps } from '@/emails/payment-failed'
+import { LeadCaptureConfirmEmail, type LeadCaptureConfirmEmailProps } from '@/emails/lead-capture-confirm'
+import { SampleProductConfirmEmail, type SampleProductConfirmEmailProps } from '@/emails/sample-product-confirm'
 
 type TemplateKey =
   | 'ebook_purchase'
@@ -14,6 +16,8 @@ type TemplateKey =
   | 'membership_charged'
   | 'trial_ending'
   | 'payment_failed'
+  | 'lead_capture_confirm'
+  | 'sample_product_confirm'
 
 const SUBJECTS: Record<TemplateKey, string> = {
   ebook_purchase: 'Your e-book is ready to download',
@@ -21,6 +25,8 @@ const SUBJECTS: Record<TemplateKey, string> = {
   membership_charged: 'Your Omni Membership has been renewed',
   trial_ending: 'Your free trial ends in 3 days',
   payment_failed: 'Action required — payment failed',
+  lead_capture_confirm: 'Confirm your sweepstakes entry',
+  sample_product_confirm: 'Confirm your email to get your free download',
 }
 
 export async function sendEmail(
@@ -56,6 +62,12 @@ export async function sendEmail(
         break
       case 'payment_failed':
         html = await render(<PaymentFailedEmail {...((data as unknown) as PaymentFailedEmailProps)} />)
+        break
+      case 'lead_capture_confirm':
+        html = await render(<LeadCaptureConfirmEmail {...((data as unknown) as LeadCaptureConfirmEmailProps)} />)
+        break
+      case 'sample_product_confirm':
+        html = await render(<SampleProductConfirmEmail {...((data as unknown) as SampleProductConfirmEmailProps)} />)
         break
       default: {
         const _exhaustive: never = template

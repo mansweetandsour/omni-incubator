@@ -4,6 +4,7 @@ import { adminClient } from '@/lib/supabase/admin'
 import { getStripeInstance } from '@/lib/stripe'
 import { sendEmail } from '@/lib/email'
 import { subscribeToBeehiiv, unsubscribeFromBeehiiv } from '@/lib/beehiiv'
+import { awardPurchaseEntries } from '@/lib/sweepstakes'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -174,15 +175,20 @@ export async function POST(request: NextRequest) {
 
           const newOrderId = newOrder.id
 
-          await adminClient.from('order_items').insert({
-            order_id: newOrderId,
-            product_id: ebook.product_id,
-            product_type: 'ebook',
-            product_title: product.title,
-            quantity: 1,
-            unit_price_cents: session.amount_total,
-            list_price_cents: product.price_cents,
-          })
+          const { data: orderItemRow, error: orderItemError } = await adminClient
+            .from('order_items')
+            .insert({
+              order_id: newOrderId,
+              product_id: ebook.product_id,
+              product_type: 'ebook',
+              product_title: product.title,
+              quantity: 1,
+              unit_price_cents: session.amount_total,
+              list_price_cents: product.price_cents,
+            })
+            .select('id')
+            .single()
+          if (orderItemError || !orderItemRow) throw new Error(orderItemError?.message ?? 'Failed to insert order_item')
 
           await adminClient.from('user_ebooks').insert({
             user_id: userId,
@@ -190,7 +196,25 @@ export async function POST(request: NextRequest) {
             order_id: newOrderId,
           })
 
-          // TODO Phase 4A: award sweepstake entries (ebook purchase)
+          // Award sweepstake entries (ebook purchase)
+          try {
+            const { data: activeSweepstake } = await adminClient
+              .from('sweepstakes').select('id').eq('status', 'active').maybeSingle()
+            if (activeSweepstake) {
+              await awardPurchaseEntries({
+                orderId: newOrderId,
+                orderItemId: orderItemRow.id,
+                productId: ebook.product_id,
+                userId: userId,
+                sweepstakeId: activeSweepstake.id,
+                listPriceCents: product.price_cents,
+                pricePaidCents: session.amount_total ?? 0,
+                couponId: session.metadata?.coupon_id ?? null,
+              })
+            }
+          } catch (entryErr) {
+            console.error('[webhook] entry awarding failed (payment mode)', event.id, entryErr)
+          }
         } catch (err) {
           console.error('[webhook] error processing checkout.session.completed payment', event.id, err)
           await adminClient.from('processed_stripe_events').delete().eq('event_id', event.id)
@@ -243,21 +267,46 @@ export async function POST(request: NextRequest) {
             if (ebook) {
               const product = (ebook.products as unknown) as { id: string; title: string; price_cents: number }
 
-              await adminClient.from('order_items').insert({
-                order_id: newOrderId,
-                product_id: ebook.product_id,
-                product_type: 'ebook',
-                product_title: product.title,
-                quantity: 1,
-                unit_price_cents: session.amount_total,
-                list_price_cents: product.price_cents,
-              })
+              const { data: ebookOrderItemRow } = await adminClient
+                .from('order_items')
+                .insert({
+                  order_id: newOrderId,
+                  product_id: ebook.product_id,
+                  product_type: 'ebook',
+                  product_title: product.title,
+                  quantity: 1,
+                  unit_price_cents: session.amount_total,
+                  list_price_cents: product.price_cents,
+                })
+                .select('id')
+                .single()
 
               await adminClient.from('user_ebooks').insert({
                 user_id: userId,
                 ebook_id: ebookId,
                 order_id: newOrderId,
               })
+
+              // Award sweepstake entries (combined checkout — ebook item only)
+              try {
+                const { data: activeSweepstake2 } = await adminClient
+                  .from('sweepstakes').select('id').eq('status', 'active').maybeSingle()
+                if (activeSweepstake2) {
+                  const ebookProduct2 = (ebook.products as unknown) as { id: string; title: string; price_cents: number }
+                  await awardPurchaseEntries({
+                    orderId: newOrderId,
+                    orderItemId: ebookOrderItemRow?.id ?? null,
+                    productId: ebook.product_id,
+                    userId: userId,
+                    sweepstakeId: activeSweepstake2.id,
+                    listPriceCents: ebookProduct2.price_cents,
+                    pricePaidCents: session.amount_total ?? 0,
+                    couponId: null,
+                  })
+                }
+              } catch (entryErr) {
+                console.error('[webhook] entry awarding failed (combined checkout)', event.id, entryErr)
+              }
             }
           }
 
@@ -289,7 +338,6 @@ export async function POST(request: NextRequest) {
             )
           }
 
-          // TODO Phase 4A: award sweepstake entries (combined checkout — entries_awarded_by_checkout=true)
         } catch (err) {
           console.error('[webhook] error processing checkout.session.completed subscription', event.id, err)
           await adminClient.from('processed_stripe_events').delete().eq('event_id', event.id)
@@ -483,18 +531,77 @@ export async function POST(request: NextRequest) {
           .update({ status: 'active' })
           .eq('stripe_subscription_id', subscriptionId)
 
-        await adminClient.from('orders').insert({
-          user_id: sub.user_id,
-          stripe_invoice_id: invoice.id,
-          status: 'completed',
-          subtotal_cents: invoice.subtotal,
-          discount_cents: 0,
-          total_cents: invoice.amount_paid,
-          is_subscription_renewal: true,
-          entries_awarded_by_checkout: false,
-        })
+        const { data: renewalOrder, error: renewalOrderError } = await adminClient
+          .from('orders')
+          .insert({
+            user_id: sub.user_id,
+            stripe_invoice_id: invoice.id,
+            status: 'completed',
+            subtotal_cents: invoice.subtotal,
+            discount_cents: 0,
+            total_cents: invoice.amount_paid,
+            is_subscription_renewal: true,
+            entries_awarded_by_checkout: false,
+          })
+          .select('id')
+          .single()
+        if (renewalOrderError || !renewalOrder) throw new Error(renewalOrderError?.message ?? 'Failed to insert renewal order')
+        const renewalOrderId = renewalOrder.id
 
-        // TODO Phase 4A: award sweepstake entries (renewal — dedup: query subscriptions.user_id via invoice.subscription, then orders where entries_awarded_by_checkout=true AND is_subscription_renewal=false LIMIT 1)
+        // Award sweepstake entries (renewal) — dedup check first
+        try {
+          const { data: checkoutOrder } = await adminClient
+            .from('orders')
+            .select('id')
+            .eq('user_id', sub.user_id)
+            .eq('entries_awarded_by_checkout', true)
+            .eq('is_subscription_renewal', false)
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle()
+
+          if (!checkoutOrder) {
+            const { data: activeSweepstake3 } = await adminClient
+              .from('sweepstakes').select('id').eq('status', 'active').maybeSingle()
+            if (activeSweepstake3) {
+              const { data: subWithProduct } = await adminClient
+                .from('subscriptions')
+                .select('product_id, products!inner(id, price_cents, type, title)')
+                .eq('stripe_subscription_id', subscriptionId)
+                .single()
+              if (subWithProduct) {
+                const subProduct = (subWithProduct.products as unknown) as { id: string; price_cents: number; type: string; title: string }
+                const { data: renewalItem } = await adminClient
+                  .from('order_items')
+                  .insert({
+                    order_id: renewalOrderId,
+                    product_id: subWithProduct.product_id,
+                    product_type: subProduct.type as 'membership_monthly' | 'membership_annual',
+                    product_title: subProduct.title,
+                    quantity: 1,
+                    unit_price_cents: invoice.amount_paid,
+                    list_price_cents: subProduct.price_cents,
+                  })
+                  .select('id')
+                  .single()
+                if (renewalItem) {
+                  await awardPurchaseEntries({
+                    orderId: renewalOrderId,
+                    orderItemId: renewalItem.id,
+                    productId: subWithProduct.product_id,
+                    userId: sub.user_id,
+                    sweepstakeId: activeSweepstake3.id,
+                    listPriceCents: subProduct.price_cents,
+                    pricePaidCents: invoice.amount_paid,
+                    couponId: null,
+                  })
+                }
+              }
+            }
+          }
+        } catch (entryErr) {
+          console.error('[webhook] entry awarding failed (renewal)', event.id, entryErr)
+        }
       } catch (err) {
         console.error('[webhook] error processing invoice.paid', event.id, err)
         await adminClient.from('processed_stripe_events').delete().eq('event_id', event.id)

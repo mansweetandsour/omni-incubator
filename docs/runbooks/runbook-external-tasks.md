@@ -192,7 +192,7 @@ The Rewardful JS snippet (`r.wdfl.co/rw.js`) is already included in the root lay
 ## Phase 4A — Lead Capture and Sweepstakes
 
 ### E19 — Create Upstash Redis database, get REST credentials
-**Blocking:** No (lead capture works without rate limiting, but configure before launch)
+**Blocking:** No (lead capture works without rate limiting) — **needed before launch** (without Upstash, the `/api/lead-capture` and `/api/lead-capture/resend` endpoints have no IP-based rate limiting; a DB-level 5-minute cooldown still protects resend, but burst abuse on the submit endpoint is unprotected)
 
 1. Go to [console.upstash.com](https://console.upstash.com) and create a Redis database (free tier is sufficient).
 2. Copy **REST URL** → `UPSTASH_REDIS_REST_URL`
@@ -256,9 +256,13 @@ Update DNS records at your domain registrar to point to Vercel's nameservers or 
 ## Post-Deployment
 
 ### E15 — Create first sweepstake in admin dashboard
-**Blocking:** Yes (sweepstake entries will not be awarded without an active sweepstake)
+**Blocking:** Yes — **needed before launch** (sweepstake entries will not be awarded without an active sweepstake; entry badges and lead capture popup will not appear)
 
-- [ ] First sweepstake created with start date, end date, and prize details
+See the [Sweepstakes Operations runbook](sweepstakes-operations.md) for step-by-step instructions.
+
+- [ ] First sweepstake created with title, prize description, start/end dates, non-purchase entry amount
+- [ ] Official rules URL set (coordinate with E14 legal review)
+- [ ] Sweepstake activated
 
 ---
 

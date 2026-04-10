@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { Badge } from '@/components/ui/badge'
+import { LeadCaptureForm } from '@/components/sweepstakes/LeadCapturePopup'
 
 export const revalidate = 60
 
@@ -57,26 +58,12 @@ export default async function MarketplacePage() {
       )}
 
       {/* Email capture */}
-      <div className="max-w-md mx-auto rounded-lg border bg-white dark:bg-zinc-900 p-8 text-center">
-        <h2 className="text-xl font-bold mb-2">Get notified when we launch</h2>
-        <p className="text-sm text-zinc-500 mb-6">
+      <div className="max-w-md mx-auto rounded-lg border bg-white dark:bg-zinc-900 p-8">
+        <h2 className="text-xl font-bold mb-2 text-center">Get notified when we launch</h2>
+        <p className="text-sm text-zinc-500 mb-6 text-center">
           Be the first to know when the marketplace opens.
         </p>
-        <form action="/api/lead-capture" method="POST" className="flex flex-col gap-3">
-          <input
-            type="email"
-            name="email"
-            required
-            placeholder="you@example.com"
-            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-          />
-          <button
-            type="submit"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-zinc-900 dark:bg-white px-4 py-2 text-sm font-medium text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-200 transition-colors"
-          >
-            Notify Me
-          </button>
-        </form>
+        <LeadCaptureForm source="marketplace_coming_soon" />
       </div>
     </div>
   )

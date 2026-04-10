@@ -1,79 +1,128 @@
-# FRONTEND_DONE.md — Phase 3: Billing
+# FRONTEND_DONE.md — Phase 4A: Sweepstakes Core
 **Frontend Agent Output**
 **Date:** 2026-04-09
-**Phase:** 3 — Billing
+**Phase:** 4A — Sweepstakes Core
 **Status:** COMPLETE
 
 ---
 
-## Build Verification
+## Verification Results
 
-- `npx tsc --noEmit` — **0 errors**
-- `npm run build` — **Success** (43 routes compiled, all dynamic)
+- `node node_modules/typescript/bin/tsc --noEmit` — **0 errors**
+- `NEXT_PUBLIC_SUPABASE_URL=... node node_modules/next/dist/bin/next build` — **BUILD SUCCESSFUL** — all 52 routes compile cleanly including all Phase 4A routes
+
+---
+
+## Pre-existing Work (Backend Agent)
+
+The following frontend tasks were already completed by the Backend Agent — verified correct:
+
+| Task | File | Status |
+|---|---|---|
+| F8 | `src/components/library/product-card.tsx` | DONE — sweepData + custom_entry_amount props, dynamic entry badge |
+| F9 | `src/app/library/page.tsx` | DONE — sweepData fetched via adminClient Promise.all, passed to ProductCard |
+| F11 | `src/app/(admin)/admin/sweepstakes/actions.ts` | DONE — all server actions implemented |
+| F12 | `src/app/(admin)/admin/sweepstakes/page.tsx` | DONE — full list page with status badges + SweepstakeActions |
+| F13 | `src/app/(admin)/admin/sweepstakes/new/page.tsx` + `[id]/page.tsx` | DONE — SweepstakeForm wired |
+| F14 | `src/app/(admin)/admin/sweepstakes/[id]/multipliers/page.tsx` | DONE — MultiplierManager wired |
+| F15 | `src/app/(admin)/admin/coupons/page.tsx` | DONE — full list page with CouponToggle |
+| F16 | `src/app/(admin)/admin/coupons/new/page.tsx` + `[id]/page.tsx` | DONE — CouponForm wired, code disabled in edit mode |
+| F17 | `src/app/(admin)/admin/products/page.tsx` | DONE — amber warning banner when no active sweepstake |
 
 ---
 
 ## Files Created
 
-### Billing Components
-- `src/components/billing/download-button.tsx` — `<DownloadButton>` anchor styled as button, href → `/api/ebooks/{ebookId}/download` (307 redirect follows automatically)
-- `src/components/billing/manage-subscription-btn.tsx` — `<ManageSubscriptionBtn>` Client Component, POSTs to `/api/subscription/portal`, redirects to Stripe portal, Loader2 spinner + inline error
-- `src/components/billing/checkout-button.tsx` — `<CheckoutButton>` Client Component, handles ebook-only and ebook+membership checkout, unauthenticated renders as login redirect link, loading state + inline error
-- `src/components/billing/pricing-cards.tsx` — `<PricingCards>` Client Component, monthly/annual toggle, $15/$129 hardcoded, Join Now → `/api/checkout/membership`, member detection, error display
-- `src/components/billing/order-history.tsx` — `<OrderHistory>` Client Component, shadcn Table, expandable rows showing line items, Load More pagination fetching `/api/profile/orders?page=N`
-
-### Pages — New
-- `src/app/ebooks/download/[id]/page.tsx` — Server Component, auth redirect if no user, ownership check via adminClient, checkout success banner on `?checkout=success`, `<DownloadButton>` for owners, "You do not own this e-book" for non-owners
-- `src/app/profile/orders/page.tsx` — Server Component, initial page fetch via adminClient, renders `<OrderHistory>`
-- `src/app/profile/ebooks/page.tsx` — Server Component, JS deduplication, ebook grid with cover images and `<DownloadButton>`
-- `src/app/profile/subscription/page.tsx` — Server Component, subscription status badge (active/trialing/past_due/canceled), trial end date, next billing date, cancel_at_period_end warning, `<ManageSubscriptionBtn>`, no-subscription prompt to `/pricing`
+| File | Description |
+|---|---|
+| `src/components/sweepstakes/MultiplierBannerClient.tsx` | `'use client'` dismiss-able amber banner (F1/F2) |
+| `src/components/sweepstakes/MultiplierBanner.tsx` | Server component — unstable_cache 60s, fetches active multiplier, renders MultiplierBannerClient |
+| `src/components/sweepstakes/EntryBadge.tsx` | Async server component — unstable_cache 60s, shows entry count or multiplier badge (F3) |
+| `src/components/sweepstakes/LeadCapturePopup.tsx` | `'use client'` — two exports: `LeadCapturePopup` (dialog with 10s/50% scroll trigger) + `LeadCaptureForm` (standalone form) (F4) |
+| `src/components/sweepstakes/LeadCapturePopupWrapper.tsx` | Async server component — queries active sweepstake prize, renders LeadCapturePopup (F5) |
+| `src/app/confirm/[token]/page.tsx` | `'use client'` email confirmation page — 5 states: loading, success, already_confirmed, invalid, expired (F7) |
 
 ---
 
 ## Files Modified
 
-- `src/app/pricing/page.tsx` — Replaced placeholder with full Server Component: `force-dynamic`, fetches user + `isActiveMember`, passes to `<PricingCards>`
-- `src/app/library/[slug]/page.tsx` — Added `isActiveMember` call (guarded by user existence), changed revalidate to `0` (force-dynamic), passes `ebookId`, `isMember`, `userId` to `<EbookDetail>`
-- `src/components/ebook/ebook-detail.tsx` — Updated `EbookDetailProps` with `ebookId`, `isMember`, `userId`; replaced disabled Buy placeholder with `<CheckoutButton>`; added membership upsell checkbox; added coupon code input with 500ms debounce + blur validation against `/api/coupons/validate`; shows `<DownloadButton>` instead of Buy for owners; shows member price when `isMember`
+| File | Change |
+|---|---|
+| `src/app/layout.tsx` | Replaced `<div id="multiplier-banner-slot" />` with Suspense-wrapped `<MultiplierBanner />` + `<LeadCapturePopupWrapper />` (F6) |
+| `src/app/library/[slug]/page.tsx` | Added `EntryBadge` + informational note above EbookDetail — "Members earn N entries (based on full $X.XX list price)" (F10) |
+| `src/app/marketplace/page.tsx` | Replaced plain HTML form with `<LeadCaptureForm source="marketplace_coming_soon" />` |
 
 ---
 
 ## Routes Implemented
 
-| Route | Type | Auth | Notes |
-|---|---|---|---|
-| `/pricing` | Server Component | Optional | Membership pricing page with toggle |
-| `/library/[slug]` | Server Component | Optional | Updated with full billing integration |
-| `/ebooks/download/[id]` | Server Component | Required (middleware) | Download + checkout success page |
-| `/profile/orders` | Server Component | Required (middleware) | Paginated order history |
-| `/profile/ebooks` | Server Component | Required (middleware) | Owned ebooks grid |
-| `/profile/subscription` | Server Component | Required (middleware) | Subscription status + portal |
+| Route | Type | Description |
+|---|---|---|
+| `/confirm/[token]` | Client page | Email confirmation flow — 5 states |
+| All admin sweepstake/coupon routes | Server pages | Already done by backend — verified |
 
 ---
 
-## Navigation
+## Component Details
 
-The navbar dropdown (`src/components/layout/navbar-auth.tsx`) already contained links for "My E-books" (`/profile/ebooks`), "Orders" (`/profile/orders`), and "Subscription" (`/profile/subscription`) from Phase 1. No changes were needed.
+### `LeadCapturePopup`
+- Trigger: 10s timer OR 50% scroll depth — whichever comes first
+- Suppression: `omni_popup_submitted` (permanent) / `omni_popup_dismissed` (30 days)
+- Dialog shows success state in-place (does not close on submit)
+- On dismiss: sets `omni_popup_dismissed` timestamp
 
----
+### `LeadCaptureForm`
+- Standalone export for inline use (marketplace, expired confirm page)
+- Props: `prizeAmount?`, `source?`, `onSuccess?`
+- States: idle → loading → success (with resend link) / error
+- Calls `POST /api/lead-capture`; `POST /api/lead-capture/resend` on "Resend email"
 
-## Running Locally
+### `MultiplierBanner`
+- Server queries `entry_multipliers JOIN sweepstakes!inner` where status=active, is_active=true, within date range
+- Cached 60s with tag `active-multiplier`
+- Renders `MultiplierBannerClient` — shows name, multiplier, formatted end date
 
-```bash
-# Ensure .env.local has all Phase 3 vars (see .env.example)
-npm run dev
-# Visit http://localhost:3000/pricing, /library/{slug}, /profile/orders, etc.
-```
+### `EntryBadge`
+- Server queries active sweepstake + max active multiplier
+- Cached 60s with tag `active-sweepstake`
+- Returns null if no active sweepstake
+- Shows "🔥 {N}X ENTRIES — Earn {X} entries" or "🎟️ Earn {X} entries"
+
+### Confirm Page `/confirm/[token]`
+- On mount: POSTs to `/api/lead-capture/confirm`
+- 200 `{ success: true }` → success state with entries + sweepstake title + upsell CTAs
+- 200 `{ alreadyConfirmed: true }` → already_confirmed state
+- 200 `{ redirect }` → `router.replace(redirect)` for sample products
+- 404 → invalid state
+- 410 → expired state (shows `LeadCaptureForm` for re-entry)
+- activeMultiplier > 1 → amber callout on success
 
 ---
 
 ## Deviations from SPEC.md
 
-### 1. `revalidate = 0` on `/library/[slug]`
-Changed from `revalidate = 60` to `0` so member price detection and ownership checks are always fresh at request time. SPEC §3.7 required `force-dynamic` for the pricing page; library detail page benefits equally since it now calls `isActiveMember`.
+### 1. Library [slug] page EntryBadge placement
+SPEC shows adding EntryBadge above `EbookDetail`. The page renders `EbookDetail` as the sole return. Rather than modifying `EbookDetail` internals, a wrapper `<div>` is used to inject the badge and informational note above the detail component. This is functionally equivalent and avoids touching Phase 3 code.
 
-### 2. No shadcn Alert component for success banner
-The project does not have a shadcn Alert component installed. Used a semantically equivalent `div` with emerald border/background pattern consistent with the rest of the codebase.
+### 2. `product.custom_entry_amount` cast in library [slug] page
+The Supabase `select('*, ebooks!inner(*)')` return type doesn't automatically expose `custom_entry_amount` as a typed field. Cast as `(product as { custom_entry_amount?: number | null }).custom_entry_amount` to avoid TypeScript error while keeping the correct runtime value (all products have this column from Phase 1 migrations).
 
-### 3. `size="lg"` on PricingCards join button
-SPEC did not specify a button size. Used `size="lg"` for the primary CTA for visual prominence — no functional impact.
+### 3. Marketplace page
+The existing form used a plain `<form action="/api/lead-capture" method="POST">` which did a full page navigation. Replaced with `LeadCaptureForm` (React client component) for a proper async SPA-style experience with loading/success/error states. The marketplace page itself remains a server component (`export const revalidate = 60`) — importing a client component inside a server component is fully supported.
+
+---
+
+## Running the Frontend Locally
+
+```bash
+npm run dev
+# App at http://localhost:3000
+```
+
+Key pages to test:
+- `/library` — entry badges on product cards
+- `/library/[slug]` — EntryBadge + informational note above detail
+- `/marketplace` — LeadCaptureForm inline
+- `/confirm/any-token` — confirmation flow (all states testable with valid/invalid tokens)
+- `/admin/sweepstakes` — list, create, edit, activate/end, multipliers
+- `/admin/coupons` — list, create, edit, toggle

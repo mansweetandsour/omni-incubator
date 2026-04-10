@@ -1,7 +1,10 @@
-# DOCS_DONE.md — Phase 3: Billing
+# DOCS_DONE.md — Phase 4A: Sweepstakes Core
 **Docs Agent Output**
 **Date:** 2026-04-09
-**Phase:** 3 — Billing
+**Phase:** 4A — Sweepstakes Core
+
+---
+
 **Overall result: PASS**
 
 ---
@@ -10,33 +13,33 @@
 
 | File | Change |
 |---|---|
-| `README.md` | Added Phase 3 to "What's Been Built"; updated Project Structure to include all new API routes, pages, components (`billing/`), lib files (`membership.ts`, `beehiiv.ts`, `email.tsx`, `coupon.ts`), `emails/` directory, and `vercel.json`; updated Key Documentation links to include ADR-007, ADR-008, and the webhook setup runbook |
-| `docs/api-reference.md` | Added all Phase 3 API endpoints: `POST /api/checkout/membership`, `POST /api/checkout/ebook`, `POST /api/checkout/ebook-with-membership`, `POST /api/coupons/validate`, `POST /api/webhooks/stripe`, `GET /api/profile/orders`, `GET /api/profile/ebooks`, `GET /api/profile/subscription`, `GET /api/ebooks/[id]/download`, `POST /api/subscription/portal` |
-| `docs/runbooks/runbook-external-tasks.md` | Updated E8 (Beehiiv), E9 (Resend), E18 (Resend domain) blocking status to "needed before Phase 4A" with explanation of what is silently skipped without each key |
+| `README.md` | Added Phase 4A section to "What's Been Built"; updated Project Structure (new routes, components, lib file, migration count); added ADR-009, ADR-010, and sweepstakes-operations.md to Key Documentation; noted Upstash is optional for local dev with no-op behavior explained |
+| `docs/api-reference.md` | Added three Phase 4A endpoint sections: `POST /api/lead-capture`, `POST /api/lead-capture/confirm`, `POST /api/lead-capture/resend`; updated webhook event table to reflect Phase 4A entry awarding in all three event branches |
+| `docs/runbooks/runbook-external-tasks.md` | Updated E15 to "needed before launch" with link to sweepstakes-operations.md and expanded checklist; updated E19 to "needed before launch" with explanation of what protection is missing without Upstash |
 
 ---
 
 ## ADRs Created
 
-| Title | Path |
+| Title | File |
 |---|---|
-| ADR-007: Webhook Idempotency via Postgres RPC | `docs/adr/ADR-007-webhook-idempotency.md` |
-| ADR-008: Stripe v22 API Adaptation | `docs/adr/ADR-008-stripe-v22-adaptation.md` |
+| ADR-009: Pure Function Design for calculateEntries | `docs/adr/ADR-009-pure-function-entry-calculation.md` |
+| ADR-010: Lead Capture Email Confirmation Flow | `docs/adr/ADR-010-lead-capture-email-confirmation.md` |
 
 ---
 
 ## Runbooks Created
 
-| Title | Path |
+| Title | File |
 |---|---|
-| Stripe Webhook Setup | `docs/runbooks/stripe-webhook-setup.md` |
+| Sweepstakes Operations | `docs/runbooks/sweepstakes-operations.md` |
 
-Covers: configuring the Stripe webhook endpoint (E6), selecting the 7 required events, adding the signing secret to environment, verifying via Stripe Dashboard test events, using Vercel logs as an alternative to Stripe CLI (which is not installed locally), local testing instructions for when CLI is available, idempotency reprocessing procedure, and a troubleshooting table.
+Covers: create a sweepstake, activate it, create entry multipliers, create coupons, end a sweepstake, drawing (Phase 4B stub), CSV export (Phase 4B stub), entry source reference table, troubleshooting (badge not showing, emails not delivered, rate limiting not active, duplicate-active-sweepstake error).
 
 ---
 
-## Documentation Debt Flagged
+## Documentation Debt
 
-1. **`processed_stripe_events` table purge** — ADR-007 notes that this table grows unboundedly. A purge runbook or scheduled Supabase cron (delete rows older than 90 days) should be added in Phase 6 or as a standalone maintenance task.
-2. **Stripe live mode cutover** — E13 in `runbook-external-tasks.md` covers switching to live mode, but there is no runbook for step-by-step verification (confirm live-mode webhook signing secret, live-mode price IDs, smoke test a real checkout end-to-end). Consider adding before Phase 6 launch.
-3. **`email_log` table** — `sendEmail` logs all attempts to `email_log`. No runbook or admin UI exists for inspecting delivery failures or resending failed emails. Flag for Phase 4A or 5.
+- `docs/runbooks/sweepstakes-operations.md` §6 (Run a Drawing) and §7 (Export CSV) are stubs — marked for completion in Phase 4B.
+- The `sweepstakes/page.tsx` public-facing sweepstakes page is still a placeholder; no user-facing docs exist for it. Will be addressed in Phase 4B or 5 when the public landing page is built.
+- `src/app/actions/sweepstakes.ts` (duplicate server actions file noted as a spec deviation in BACKEND_DONE.md) is not documented. If the duplication is resolved in a later cleanup, no doc update is needed.

@@ -16,16 +16,21 @@ interface ProductCardProps {
     title: string
     description: string | null
     price_cents: number
+    custom_entry_amount?: number | null
     cover_image_url: string | null
     ebook: ProductCardEbook
   }
+  sweepData?: {
+    hasActiveSweepstake: boolean
+    activeMultiplier: number | null
+  } | null
 }
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, sweepData }: ProductCardProps) {
   const authors =
     product.ebook.authors.length > 0 ? product.ebook.authors.join(', ') : 'Unknown'
   const category = CATEGORY_LABELS[product.ebook.category] ?? product.ebook.category
@@ -63,7 +68,14 @@ export function ProductCard({ product }: ProductCardProps) {
         <p className="text-xs text-zinc-500">{authors}</p>
         <div className="flex items-center justify-between pt-1">
           <span className="font-bold text-sm">{formatPrice(product.price_cents)}</span>
-          <span className="text-xs text-zinc-400 italic">Earn entries</span>
+          {sweepData?.hasActiveSweepstake && (() => {
+            const base = product.custom_entry_amount ?? Math.floor(product.price_cents / 100)
+            if (sweepData.activeMultiplier) {
+              const earned = Math.floor(base * sweepData.activeMultiplier)
+              return <span className="text-xs font-semibold text-orange-600">🔥 {sweepData.activeMultiplier}X — {earned} entries</span>
+            }
+            return <span className="text-xs font-medium text-zinc-500">🎟️ {base} entries</span>
+          })()}
         </div>
       </div>
     </Link>

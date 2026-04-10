@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { adminClient } from '@/lib/supabase/admin'
 import { ProductCard } from '@/components/library/product-card'
 import { FilterSidebar } from '@/components/library/filter-sidebar'
 import { SearchInput } from '@/components/library/search-input'
@@ -40,7 +41,7 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
   let query = supabase
     .from('products')
     .select(
-      'id, slug, title, description, price_cents, cover_image_url, ebooks!inner(id, authors, category, tags, operator_dependency, scale_potential, cost_to_start)',
+      'id, slug, title, description, price_cents, custom_entry_amount, cover_image_url, ebooks!inner(id, authors, category, tags, operator_dependency, scale_potential, cost_to_start)',
       { count: 'exact' }
     )
     .eq('type', 'ebook')
@@ -90,6 +91,7 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
     title: string
     description: string | null
     price_cents: number
+    custom_entry_amount: number | null
     cover_image_url: string | null
     ebooks: EbookRow | EbookRow[]
   }
@@ -112,6 +114,27 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
   const total = count ?? 0
   const hasMore = products.length === PAGE_SIZE && total > PAGE_SIZE
 
+  // Fetch sweepstake data once for entry badges
+  const [{ data: activeSweepstake }, { data: activeMultiplierRow }] = await Promise.all([
+    adminClient.from('sweepstakes').select('id').eq('status', 'active').maybeSingle(),
+    adminClient
+      .from('entry_multipliers')
+      .select('multiplier')
+      .eq('is_active', true)
+      .lte('start_at', new Date().toISOString())
+      .gte('end_at', new Date().toISOString())
+      .order('multiplier', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+
+  const sweepData = activeSweepstake
+    ? {
+        hasActiveSweepstake: true,
+        activeMultiplier: activeMultiplierRow ? Number(activeMultiplierRow.multiplier) : null,
+      }
+    : null
+
   // Build search params string for load-more
   const clientParams = new URLSearchParams()
   if (q) clientParams.set('q', q)
@@ -129,6 +152,7 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
       title: p.title,
       description: p.description,
       price_cents: p.price_cents,
+      custom_entry_amount: p.custom_entry_amount ?? null,
       cover_image_url: p.cover_image_url,
       ebook: {
         id: ebook?.id ?? '',
@@ -173,7 +197,7 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {productCards.map((product) => (
-                <ProductCard key={product.id} product={product} />
+                <ProductCard key={product.id} product={product} sweepData={sweepData} />
               ))}
               {hasMore && (
                 <LoadMoreButton

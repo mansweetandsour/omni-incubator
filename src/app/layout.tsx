@@ -1,10 +1,13 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
+import { Suspense } from 'react'
 import './globals.css'
 import { Navbar } from '@/components/layout/navbar'
 import { Footer } from '@/components/layout/footer'
 import { Toaster } from '@/components/ui/sonner'
 import { Providers } from '@/components/providers'
+import MultiplierBanner from '@/components/sweepstakes/MultiplierBanner'
+import { LeadCapturePopupWrapper } from '@/components/sweepstakes/LeadCapturePopupWrapper'
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -40,8 +43,13 @@ export default function RootLayout({
       </head>
       <body className="min-h-screen flex flex-col antialiased">
         <Providers>
-          {/* Phase 4A: multiplier banner slot */}
-          <div id="multiplier-banner-slot" />
+          {/* Phase 4A: multiplier banner + lead capture popup */}
+          <Suspense fallback={null}>
+            <MultiplierBanner />
+          </Suspense>
+          <Suspense fallback={null}>
+            <LeadCapturePopupWrapper />
+          </Suspense>
           <Navbar />
           <main className="flex-1">{children}</main>
           <Footer />

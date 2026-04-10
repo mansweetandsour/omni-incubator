@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation'
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { isActiveMember } from '@/lib/membership'
 import { EbookDetail } from '@/components/ebook/ebook-detail'
+import { EntryBadge } from '@/components/sweepstakes/EntryBadge'
 
 export const revalidate = 0
 
@@ -55,12 +57,28 @@ export default async function EbookDetailPage({ params }: EbookDetailPageProps) 
   }
 
   return (
-    <EbookDetail
-      product={productWithEbook}
-      userOwnsEbook={userOwnsEbook}
-      ebookId={ebook.id}
-      isMember={isMember}
-      userId={user?.id ?? null}
-    />
+    <div>
+      <div className="container mx-auto px-4 pt-6 pb-0 max-w-4xl">
+        <Suspense fallback={null}>
+          <EntryBadge
+            product={{
+              price_cents: product.price_cents,
+              custom_entry_amount: (product as { custom_entry_amount?: number | null }).custom_entry_amount ?? null,
+            }}
+          />
+        </Suspense>
+        <p className="text-sm text-zinc-500 mt-1">
+          Members earn {Math.floor(product.price_cents / 100)} entries (based on full $
+          {(product.price_cents / 100).toFixed(2)} list price)
+        </p>
+      </div>
+      <EbookDetail
+        product={productWithEbook}
+        userOwnsEbook={userOwnsEbook}
+        ebookId={ebook.id}
+        isMember={isMember}
+        userId={user?.id ?? null}
+      />
+    </div>
   )
 }

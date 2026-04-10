@@ -56,7 +56,7 @@ PRD excerpt:
   Exit criteria: Full purchase and subscription flow works end-to-end. Downloads, webhooks, emails all functional.
 
 ## Phase 4A: Sweepstakes Core
-Status: PENDING
+Status: COMPLETE
 Dependencies: Phase 3 complete (Resend must be configured before this phase)
 PRD excerpt:
   lib/sweepstakes.ts: calculateEntries() per §5.1. awardPurchaseEntries(), awardLeadCaptureEntries() per §5.2b, awardAdminAdjustment(). Unit test these.

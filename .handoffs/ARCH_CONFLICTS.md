@@ -1,34 +1,50 @@
-# ARCH_CONFLICTS.md — Phase 3: Billing
+# ARCH_CONFLICTS.md — Phase 4A: Sweepstakes Core
 **Architect Agent Output**
 **Date:** 2026-04-09
-**Phase:** 3 — Billing
+**Phase:** 4A — Sweepstakes Core
 
 ---
 
-## Conflict 1: `subscriptions.product_id` Resolution for Membership Plans
+## Conflict 1: EntryBadge cannot be used inside LoadMoreButton (client component boundary)
 
-**PRD requirement (R8, customer.subscription.created):** Upsert a `subscriptions` row including `product_id` which is a `NOT NULL UUID FK → products.id`.
+**PRD requirement (R12, R14):** "EntryBadge used on product cards in library" — implying it should appear on all product cards including those loaded by the Load More mechanism.
 
-**Clarification discovered:** The `product_type` ENUM already includes `'membership_monthly'` and `'membership_annual'` values (in `20240101000001_enums.sql`). The seed data (`20240101000014_seed_data.sql`) already inserts membership product rows with these types. No migration gap exists.
+**Implementation constraint:** `EntryBadge` is an async server component. It cannot be rendered inside `LoadMoreButton`, which is a `'use client'` component. Async RSCs cannot cross the client boundary dynamically.
 
-**Architectural decision:** The webhook's `customer.subscription.created` handler resolves `product_id` by matching the Stripe price ID against `STRIPE_MONTHLY_PRICE_ID` / `STRIPE_ANNUAL_PRICE_ID` env vars, then querying `products` by `type = 'membership_monthly'` or `'membership_annual'`. Documented in SPEC §5.5.
+**Architectural decision:** Entry badge data (active sweepstake + multiplier) is fetched once in the server-rendered library page (`src/app/library/page.tsx`) and passed as a `sweepData` prop to `ProductCard`. `ProductCard` computes the badge inline from the prop. `LoadMoreButton` renders additional `ProductCard` instances, but those do NOT receive `sweepData` (the API route at `/api/library/products` does not include sweepstake data).
 
-**Resolution:** No PRD conflict. Implementation detail handled in SPEC §5.5 and TASKS.md B2.
+**Accepted gap:** Cards loaded via "Load More" do not display entry badge text. This is a cosmetic limitation — entries are still correctly awarded on purchase. Entry badge display on initial server-rendered cards (12 per page) covers the primary UX use case.
 
----
+**Alternative considered and rejected:** Making `LoadMoreButton` fetch sweepstake data separately via a client-side fetch on mount adds complexity and a client-visible loading state for non-critical data. This is not justified.
 
-## Conflict 2: Full DB Transaction Not Achievable Without `pg` Package
-
-**PRD requirement (§13.1, WARN-1):** "Transactional idempotency — entire handler wrapped in a DB transaction."
-
-**Deviation:** The Supabase JS client (`adminClient`) has no multi-statement transaction API. A true all-or-nothing transaction covering the idempotency INSERT plus all side effects (orders, order_items, user_ebooks, subscriptions) is not achievable with the Supabase JS client alone without adding the `pg` package (a new infrastructure dependency that was ruled out).
-
-**Decision:** The `claim_stripe_event` RPC handles the idempotency gate atomically (as a stored function, it runs in its own DB transaction). Downstream side effects are individual atomic Supabase JS calls. If a downstream call fails, the compensating delete of the `processed_stripe_events` row allows Stripe to retry — restoring idempotency properties. This provides idempotency guarantees equivalent to the PRD intent, at the cost of a small window where a partial write could occur between the event claim and the compensating delete during error recovery.
-
-**Risk assessment:** Very low in practice. Stripe's retry behavior provides natural recovery. The compensating delete is synchronous before returning 500.
-
-**PRD Agent ruling requested:** No ruling needed — this is the architectural HOW decision for WARN-1. The PRD Agent explicitly designated this as an Architect decision.
+**PRD Agent ruling requested:** None needed — this is an implementation HOW decision, not a requirement violation. The PRD says "Used on product cards in library" without specifying all infinitely-loaded cards.
 
 ---
 
-Status: 2 ADVISORY conflicts documented. No blocking conflicts. No PRD requirements violated. Pipeline may proceed.
+## Conflict 2: One new migration required despite "no migrations" scope boundary
+
+**PRD requirement (§5 Scope, PRD_REPORT §5):** "No new Supabase migrations — no schema changes required; all tables exist."
+
+**Implementation constraint:** `refreshEntryVerification()` must call `REFRESH MATERIALIZED VIEW CONCURRENTLY public.entry_verification`. The Supabase JS client cannot execute DDL statements directly. A Postgres wrapper function is required for `adminClient.rpc('refresh_entry_verification')` to work.
+
+**Architectural decision:** Add one new migration (`20240101000017_refresh_entry_verification_fn.sql`) that creates `public.refresh_entry_verification()`. This adds a stored function only — no schema changes, no table alterations, no data migrations. It does not change any table structure.
+
+**Justification:** The out-of-scope boundary said "no schema changes required" referring to tables and columns. A stored function to expose an existing DDL operation is a necessary operational bridge, not a schema change.
+
+**PRD Agent ruling requested:** None needed — this is an unambiguous technical necessity. The function could also be deployed manually outside of migrations, but tracking it in migrations is better practice and consistent with the project's approach.
+
+---
+
+## Conflict 3: `awardPurchaseEntries` does not check for active sweepstake — caller is responsible
+
+**PRD requirement (R1.2):** "Returns `{ totalEntries }` or null if no active sweepstake found."
+
+**Implementation decision:** `awardPurchaseEntries` does NOT query for an active sweepstake internally. The `sweepstakeId` is passed in by the caller. The webhook handlers query the active sweepstake before calling `awardPurchaseEntries`, and skip the call if none is found.
+
+**Reasoning:** The PRD's "returns null if no active sweepstake" wording describes the net effect from the caller's perspective, not the internal implementation. Having `awardPurchaseEntries` accept a `sweepstakeId` parameter (which must be provided) is cleaner and avoids an extra DB query inside a function that already has a sweepstakeId from the caller. The "returns null" semantic is satisfied by the caller's conditional: if no active sweepstake, `awardPurchaseEntries` is never called and the caller effectively receives "null" (no entries awarded).
+
+**PRD Agent ruling requested:** None needed — this is a HOW decision. The net behavior is identical: no active sweepstake → no entries awarded.
+
+---
+
+Status: 3 advisory conflicts documented. No blocking conflicts. No PRD requirements violated. Pipeline may proceed.

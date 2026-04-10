@@ -168,13 +168,13 @@ Idempotent Stripe webhook handler. Processes the following events:
 
 | Event | Effect |
 |---|---|
-| `checkout.session.completed` (payment) | INSERT order + order_items + user_ebooks; send ebook purchase email |
-| `checkout.session.completed` (subscription) | INSERT order + order_items + user_ebooks + UPSERT subscriptions |
+| `checkout.session.completed` (payment) | INSERT order + order_items + user_ebooks; send ebook purchase email; award sweepstake entries (non-fatal) |
+| `checkout.session.completed` (subscription/combined) | INSERT order + order_items + user_ebooks + UPSERT subscriptions; award ebook sweepstake entries, set `entries_awarded_by_checkout=true` |
 | `customer.subscription.created` | UPSERT subscriptions; send membership welcome email; subscribe to Beehiiv |
 | `customer.subscription.updated` | UPDATE subscriptions |
 | `customer.subscription.deleted` | SET subscriptions.status = canceled; unsubscribe from Beehiiv |
 | `customer.subscription.trial_will_end` | Send trial ending email |
-| `invoice.paid` | UPDATE subscriptions.status = active; INSERT renewal order; send membership charged email |
+| `invoice.paid` | UPDATE subscriptions.status = active; INSERT renewal order; send membership charged email; award renewal sweepstake entries (skipped if combined-checkout order exists) |
 | `invoice.payment_failed` | UPDATE subscriptions.status = past_due; send payment failed email |
 
 Idempotency is enforced via the `claim_stripe_event` Postgres RPC (see ADR-007). Duplicate event deliveries return 200 immediately without side effects.
@@ -285,6 +285,104 @@ Create a Stripe Billing Portal session for the authenticated user. The user is r
 ```
 
 **Error responses:** `400` (no Stripe customer ID on profile), `401`, `500`.
+
+---
+
+## Lead Capture
+
+### `POST /api/lead-capture`
+
+**Auth:** None (public). Rate-limited to 5 requests per IP per hour via Upstash Redis. Rate limiting is skipped if `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are not set.
+
+Submit an email address for the active sweepstake lead capture. Creates a `lead_captures` row with `confirmed_at=NULL` and `entry_awarded=false`, and sends a confirmation email. Entries are not awarded until the token in the confirmation email is validated (see ADR-010).
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | string | Yes | Email address to capture |
+| `source` | string | No | Source identifier (e.g., `popup`, `marketplace_coming_soon`, `sample_product`). Defaults to `popup`. |
+| `sampleProductId` | string (UUID) | No | Required when `source = 'sample_product'`. Used to construct the post-confirm download redirect. |
+
+**Response (200) — new submission:**
+```json
+{ "success": true }
+```
+
+**Response (200) — duplicate (same email + sweepstake):**
+```json
+{ "duplicate": true, "message": "You've already entered" }
+```
+
+**Error responses:** `400` (no active sweepstake, invalid input), `429` (rate limit), `500`.
+
+---
+
+### `POST /api/lead-capture/confirm`
+
+**Auth:** None (public, token-authenticated).
+
+Validate a confirmation token, mark the lead as confirmed, and award sweepstake entries. The token is the UUID stored in `lead_captures.confirmation_token`.
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `token` | string (UUID) | Yes | Confirmation token from the email link |
+
+**Response (200) — confirmed, entries awarded:**
+```json
+{
+  "success": true,
+  "entries": 10,
+  "source": "popup",
+  "sweepstake": {
+    "title": "Spring Sweepstakes",
+    "prize_description": "...",
+    "end_at": "2026-06-01T00:00:00Z"
+  },
+  "activeMultiplier": 2.0
+}
+```
+
+**Response (200) — already confirmed:**
+```json
+{ "alreadyConfirmed": true, "entries": 10, "source": "popup" }
+```
+
+**Response (200) — sample product redirect:**
+```json
+{ "redirect": "/free/{slug}/download?token={token}" }
+```
+(Returned when `source = 'sample_product'`; client should `router.replace(redirect)`.)
+
+**Response (410) — token expired (> 72 hours):**
+```json
+{ "error": "Token expired", "email": "user@example.com" }
+```
+
+**Error responses:** `404` (token not found / already confirmed with no entries), `410` (expired), `500`.
+
+---
+
+### `POST /api/lead-capture/resend`
+
+**Auth:** None (public). Rate-limited via Upstash (1 per email per 5 minutes) and a DB-level guard that enforces the same cooldown when Upstash is not configured.
+
+Regenerate the confirmation token and resend the confirmation email to a pending (unconfirmed) lead.
+
+**Request body (JSON):**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | string | Yes | Email address of the pending lead |
+
+**Response (200):**
+```json
+{ "success": true }
+```
+
+**Error responses:** `404` (no pending unconfirmed lead for this email), `429` (resent within last 5 minutes), `500`.
 
 ---
 

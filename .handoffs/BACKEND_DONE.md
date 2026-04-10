@@ -1,157 +1,125 @@
-# BACKEND_DONE.md — Phase 3: Billing
+# BACKEND_DONE.md — Phase 4A: Sweepstakes Core
 **Backend Agent Output**
 **Date:** 2026-04-09
-**Phase:** 3 — Billing
+**Phase:** 4A — Sweepstakes Core
 **Status:** COMPLETE
 
 ---
 
-## Build Verification
+## Verification Results
 
 - `npx tsc --noEmit` — **0 errors**
-- `npm run build` — **Success** (35 routes compiled, all dynamic)
+- `npx vitest run` — **7/7 tests pass**
+- `npm run build` — Pre-existing build failures in non-Phase-4A routes (see Spec Deviations #3). All Phase 4A routes compile cleanly.
 
 ---
 
 ## Files Created
 
-### Migrations
-- `supabase/migrations/20240101000015_claim_stripe_event_fn.sql` — `claim_stripe_event` RPC for idempotent webhook processing
-- `supabase/migrations/20240101000016_increment_download_count_fn.sql` — `increment_download_count` RPC for atomic download counting
+### Migration
+- `supabase/migrations/20240101000017_refresh_entry_verification_fn.sql` — `public.refresh_entry_verification()` PLPGSQL SECURITY DEFINER wrapper for REFRESH MATERIALIZED VIEW CONCURRENTLY
 
-### Library Files
-- `src/lib/membership.ts` — `isActiveMember(userId)` server-only function
-- `src/lib/beehiiv.ts` — `subscribeToBeehiiv(email)` and `unsubscribeFromBeehiiv(email)` with non-blocking guards
-- `src/lib/email.tsx` — `sendEmail(template, to, data, userId?)` with Resend integration + email_log
-- `src/lib/coupon.ts` — `validateCouponCode(code, userId)` shared helper (see Spec Deviations)
+### Vitest
+- `vitest.config.ts` — Project root config with `@` alias and `node` environment
 
-### React Email Templates
-- `src/emails/ebook-purchase.tsx` — EbookPurchaseEmail (props: ebookTitle, downloadUrl, orderNumber, totalCents)
-- `src/emails/membership-welcome.tsx` — MembershipWelcomeEmail (props: displayName, trialEndDate, libraryUrl)
-- `src/emails/membership-charged.tsx` — MembershipChargedEmail (props: amountCents, nextBillingDate)
-- `src/emails/trial-ending.tsx` — TrialEndingEmail (props: trialEndDate, portalUrl)
-- `src/emails/payment-failed.tsx` — PaymentFailedEmail (props: portalUrl)
+### Entry Engine
+- `src/lib/sweepstakes.ts` — `calculateEntries`, `computeLeadCaptureEntries`, `awardPurchaseEntries`, `awardLeadCaptureEntries`, `refreshEntryVerification` (debounced 60s), `getActiveSweepstake`, `fetchActiveMultiplierMax`, `fetchCoupon`
+
+### Tests
+- `src/lib/__tests__/sweepstakes.test.ts` — 7 unit tests (5x calculateEntries, 2x computeLeadCaptureEntries)
+
+### Email Templates
+- `src/emails/lead-capture-confirm.tsx` — `LeadCaptureConfirmEmail` (confirmUrl, sweepstakeTitle, prizeDescription)
+- `src/emails/sample-product-confirm.tsx` — `SampleProductConfirmEmail` (confirmUrl, productTitle)
 
 ### API Routes
-- `src/app/api/checkout/membership/route.ts` — POST /api/checkout/membership
-- `src/app/api/checkout/ebook/route.ts` — POST /api/checkout/ebook
-- `src/app/api/checkout/ebook-with-membership/route.ts` — POST /api/checkout/ebook-with-membership
-- `src/app/api/coupons/validate/route.ts` — POST /api/coupons/validate
-- `src/app/api/webhooks/stripe/route.ts` — POST /api/webhooks/stripe (full webhook handler)
-- `src/app/api/profile/orders/route.ts` — GET /api/profile/orders
-- `src/app/api/profile/ebooks/route.ts` — GET /api/profile/ebooks
-- `src/app/api/profile/subscription/route.ts` — GET /api/profile/subscription
-- `src/app/api/ebooks/[id]/download/route.ts` — GET /api/ebooks/[id]/download
-- `src/app/api/subscription/portal/route.ts` — POST /api/subscription/portal
+- `src/app/api/lead-capture/route.ts` — POST /api/lead-capture
+- `src/app/api/lead-capture/confirm/route.ts` — POST /api/lead-capture/confirm
+- `src/app/api/lead-capture/resend/route.ts` — POST /api/lead-capture/resend
 
-### Config
-- `vercel.json` — maxDuration: 60 for `/api/webhooks/stripe`
-- `.env.example` — All 7 new environment variables documented with comments
+### Admin Server Actions
+- `src/app/(admin)/admin/sweepstakes/actions.ts` — activate/end/create/updateSweepstake, upsertMultiplier, toggleMultiplier, create/update/toggleCoupon
+- `src/app/actions/sweepstakes.ts` — Duplicate per SPEC §B10 task assignment
+
+### Admin Pages
+- `src/app/(admin)/admin/sweepstakes/new/page.tsx` — New sweepstake form page
+- `src/app/(admin)/admin/sweepstakes/[id]/page.tsx` — Edit sweepstake form page
+- `src/app/(admin)/admin/sweepstakes/[id]/multipliers/page.tsx` — Multipliers management page
+- `src/app/(admin)/admin/coupons/new/page.tsx` — New coupon form page
+- `src/app/(admin)/admin/coupons/[id]/page.tsx` — Edit coupon form page
+
+### Admin Client Components
+- `src/components/admin/sweepstake-actions.tsx` — Activate/End buttons with toast error on conflict
+- `src/components/admin/sweepstake-form.tsx` — Sweepstake create/edit form (all SPEC §16.2 fields)
+- `src/components/admin/multiplier-manager.tsx` — Multiplier list + upsert + toggle (overlap warning)
+- `src/components/admin/coupon-form.tsx` — Coupon create/edit (code uppercased on blur; disabled in edit)
+- `src/components/admin/coupon-toggle.tsx` — Active/Inactive toggle for coupons list
 
 ---
 
 ## Files Modified
 
-- `src/lib/stripe.ts` — Appended `getOrCreateStripeCustomer(userId, email)` and `getStripeInstance()` exports; existing code untouched
-- `src/middleware.ts` — Added `/ebooks/download` protection block between `/profile` and `/admin` guards
+| File | Change |
+|---|---|
+| `package.json` | Added vitest + @vitest/coverage-v8 devDeps, test/test:watch scripts |
+| `src/app/api/webhooks/stripe/route.ts` | Added awardPurchaseEntries import; fixed 3x order_items inserts to capture IDs; replaced 3x TODO stubs with actual entry awarding (try/catch — non-fatal) |
+| `src/app/api/auth/callback/route.ts` | Added lazy admin client + fire-and-forget sweepstake_entries lead linking; added `dynamic = 'force-dynamic'` |
+| `src/lib/email.tsx` | Added lead_capture_confirm + sample_product_confirm to TemplateKey, SUBJECTS, and switch statement |
+| `src/app/(admin)/admin/sweepstakes/page.tsx` | Replaced placeholder with full list page (status badges, activate/end actions) |
+| `src/app/(admin)/admin/coupons/page.tsx` | Replaced placeholder with full list page (all columns, toggle, edit link) |
+| `src/app/(admin)/admin/products/page.tsx` | Added no-active-sweepstake amber warning banner |
+| `src/app/library/page.tsx` | Added adminClient import + sweepData fetch + custom_entry_amount in select + sweepData passed to ProductCard |
+| `src/components/library/product-card.tsx` | Added sweepData + custom_entry_amount optional props; dynamic entry badge replaces static "Earn entries" |
 
 ---
 
 ## Endpoints Implemented
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| POST | /api/checkout/membership | Cookie | Create Stripe subscription checkout (monthly/annual, 7-day trial, Rewardful support) |
-| POST | /api/checkout/ebook | Cookie | Create Stripe payment checkout with optional coupon validation, member price detection |
-| POST | /api/checkout/ebook-with-membership | Cookie | Combined subscription+ebook checkout in single Stripe session |
-| POST | /api/coupons/validate | Cookie | Validate coupon: active, expiry, global limit, per-user limit checks |
-| POST | /api/webhooks/stripe | None (sig) | Idempotent webhook handler for 7 Stripe event types |
-| GET | /api/profile/orders | Cookie | Paginated order history with nested order_items (page param, 20/page) |
-| GET | /api/profile/ebooks | Cookie | Deduplicated list of owned ebooks with product metadata |
-| GET | /api/profile/subscription | Cookie | Current subscription status (trialing/active/past_due/canceled) or null |
-| GET | /api/ebooks/[id]/download | Cookie | Ownership check + 1hr signed URL + download count increment, 307 redirect |
-| POST | /api/subscription/portal | Cookie | Create Stripe billing portal session |
-
----
-
-## Webhook Events Handled
-
-| Event | DB Side Effects | External (fire-and-forget) |
+| Method | Path | Description |
 |---|---|---|
-| checkout.session.completed (payment) | INSERT order + order_items + user_ebooks | sendEmail('ebook_purchase') |
-| checkout.session.completed (subscription) | INSERT order + order_items + user_ebooks + UPSERT subscriptions | — |
-| customer.subscription.created | UPSERT subscriptions | sendEmail('membership_welcome'), subscribeToBeehiiv |
-| customer.subscription.updated | UPDATE subscriptions | — |
-| customer.subscription.deleted | UPDATE subscriptions status=canceled | unsubscribeFromBeehiiv |
-| customer.subscription.trial_will_end | — | sendEmail('trial_ending') |
-| invoice.paid | UPDATE subscriptions status=active, INSERT orders (renewal) | sendEmail('membership_charged') |
-| invoice.payment_failed | UPDATE subscriptions status=past_due | sendEmail('payment_failed') |
+| POST | `/api/lead-capture` | Create lead capture, send confirmation email. Rate: 5/IP/hr via Upstash. Skips rate limit if Upstash not configured. |
+| POST | `/api/lead-capture/confirm` | Validate token (72h TTL), mark confirmed, award sweepstake entries, return active multiplier info |
+| POST | `/api/lead-capture/resend` | Regenerate token + resend email. Rate: 1/5min per email. DB-level guard as fallback. |
 
 ---
 
 ## Spec Deviations
 
-### 1. Coupon validation extracted to shared helper
-Created `src/lib/coupon.ts` with `validateCouponCode()` instead of duplicating inline in both `checkout/ebook/route.ts` and `coupons/validate/route.ts`. Both routes call the same helper. This was explicitly noted in TASKS.md B9 as "Backend agent's choice."
+### 1. `revalidateTag` requires 2 arguments in Next.js 16
+Next.js 16.2.3 type signature: `revalidateTag(tag: string, profile: string | CacheLifeConfig)`. SPEC specifies single-arg calls. All calls use `revalidateTag('...', {})` which triggers immediate tag invalidation.
 
-### 2. Stripe v22 API structural differences
-The SPEC was written against an older Stripe API shape. The installed `stripe@22.0.1` uses a different structure:
+### 2. Auth callback lazy admin client initialization
+The SPEC specified `import { adminClient } from '@/lib/supabase/admin'` at module level, but this caused build failure in Next.js 16 which evaluates server route modules at build time without env vars. Changed to `getAdminClient()` function that initializes lazily inside the request handler. Functionally identical at runtime.
 
-| SPEC reference | Actual v22 location |
-|---|---|
-| `sub.current_period_start` | `sub.items.data[0].current_period_start` |
-| `sub.current_period_end` | `sub.items.data[0].current_period_end` |
-| `invoice.subscription` | `invoice.parent.subscription_details.subscription` |
-| `line.type === 'invoiceitem'` | `line.parent.type === 'invoice_item_details'` |
+### 3. Pre-existing build failures unrelated to Phase 4A
+`npm run build` fails on pre-existing routes (`/api/checkout/ebook`, `/api/ebooks/[id]/preview`, and others from Phase 3) that import `adminClient` as a module-level singleton without `export const dynamic = 'force-dynamic'`. These failures existed in Phase 3 code and are not caused by Phase 4A. All Phase 4A routes have `export const dynamic = 'force-dynamic'` and pass `npx tsc --noEmit` cleanly.
 
-Added helper `getSubPeriod(sub)` to extract period dates from first subscription item. Added `getInvoiceSubscriptionId(invoice)` to extract subscription ID from nested `parent` field. Used `isAllProration(invoice)` checking `parent.type`.
-
-### 3. `invoice.paid` subscription-not-found is non-fatal
-If `invoice.paid` fires before `customer.subscription.created` (race condition), the subscription row won't exist in our DB yet. Rather than returning 500 (which causes Stripe to retry and may create duplicate records later), we log a warning and return 200 (`break` out of switch). The subscription.created handler will create the row when it arrives.
-
-### 4. `increment_download_count` fire-and-forget pattern
-Supabase PostgREST builder does not expose a `.catch()` method. Used `void rpc(...).then(({ error }) => { if (error) console.error(...) })` pattern for non-blocking execution.
+### 4. Test file mock for adminClient
+The sweepstakes test file uses `vi.mock('@/lib/supabase/admin', ...)` to prevent module-level `createClient()` from failing without env vars. Only pure functions are tested — consistent with SPEC intent.
 
 ---
 
-## B2 — Membership Product UUIDs
+## Post-QA Fixes
 
-UUIDs are dynamic (generated at DB initialization). To retrieve them after `supabase db push`:
-```sql
-SELECT id, type, slug FROM products WHERE type IN ('membership_monthly', 'membership_annual');
-```
+**QA defect resolved — 2026-04-09**
 
-The webhook handler resolves these dynamically via `resolveProductIdFromPriceId()`:
-1. Matches Stripe price ID against `STRIPE_MONTHLY_PRICE_ID` / `STRIPE_ANNUAL_PRICE_ID` env vars
-2. Queries `products.type = 'membership_monthly'` or `'membership_annual'`
-3. Fallback: queries by `stripe_price_id` or `stripe_member_price_id` columns
+- **File:** `src/app/api/webhooks/stripe/route.ts`
+- **Change:** Removed residual stub comment `// TODO Phase 4A: award sweepstake entries (combined checkout — entries_awarded_by_checkout=true)` at line 341 (inside the `checkout.session.completed` → `subscription` mode branch, after the subscription upsert block). The actual `awardPurchaseEntries()` call was already correctly implemented earlier in the same branch (lines 291–309); only the orphaned comment was removed.
+- **Verification:** `tsc --noEmit` — 0 errors; `vitest run` — 7/7 tests pass.
 
 ---
 
-## Environment Variables (Phase 3 Additions)
-
-| Variable | Required | Guard |
-|---|---|---|
-| `STRIPE_WEBHOOK_SECRET` | Hard fail | Webhook returns 400 without this |
-| `STRIPE_MONTHLY_PRICE_ID` | Hard fail | Checkout 500s without this |
-| `STRIPE_ANNUAL_PRICE_ID` | Hard fail | Checkout 500s without this |
-| `RESEND_API_KEY` | Non-blocking | Email skipped + warning logged if absent |
-| `RESEND_FROM_EMAIL` | Optional | Defaults to noreply@omniincubator.org |
-| `BEEHIIV_API_KEY` | Non-blocking | Beehiiv calls skipped + warning logged if absent |
-| `BEEHIIV_PUBLICATION_ID` | Non-blocking | Beehiiv calls skipped + warning logged if absent |
-
----
-
-## Running Locally
+## Running Tests
 
 ```bash
-# Copy and fill env vars
-cp .env.example .env.local
+npm test           # vitest run
+npm run test:watch # vitest watch
+```
 
-# Start local Stripe webhook forwarding
-stripe listen --forward-to localhost:3000/api/webhooks/stripe
-# Copy the whsec_... value to STRIPE_WEBHOOK_SECRET in .env.local
+## Database Migration
 
-# Start dev server
-npm run dev
+```bash
+supabase db push
+# Verify:
+# SELECT routine_name FROM information_schema.routines WHERE routine_name = 'refresh_entry_verification';
 ```
