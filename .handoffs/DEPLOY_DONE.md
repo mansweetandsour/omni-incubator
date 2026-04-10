@@ -1,176 +1,134 @@
-# DEPLOY_DONE.md — Phase 5: Marketplace Shell
-
-**Result: APPROVED**
-**Date:** 2026-04-09
-**Phase:** 5 — Marketplace Shell
-
----
-
-## Summary
-
-Phase 5 is build-clean and infra-ready. QA confirmed 37 routes compile cleanly, 7/7 Vitest tests pass, and `tsc --noEmit` produces 0 errors. Migration `20240101000019` exists and is the only new migration. No new environment variables were introduced. No hardcoded secrets found in any new or modified Phase 5 file. No deployment blockers.
+# DEPLOY_DONE.md — Phase 6: Polish & Deploy
+**DevOps Agent**
+**Date:** 2026-04-10
+**Phase:** 6 — Polish & Deploy
+**Status: APPROVED**
 
 ---
 
-## Task Results
+## Build Verification
 
-### Task 1 — Build Clean Verification
-
-**PASS — Confirmed by QA**
-
-QA Agent confirmed:
-
-```
-npm run build
-→ 37 routes compiled successfully
-→ TypeScript: 0 errors
-→ Next.js build: PASS (0 errors)
-
-node node_modules/typescript/bin/tsc --noEmit
-→ 0 errors
-
-node node_modules/vitest/vitest.mjs run
-→ 7/7 tests passed (no regressions)
-```
-
-Phase 5 routes confirmed compiled:
-- `/marketplace/[slug]` — new ISR route (service detail page)
-- `/marketplace` — modified (entry badges, card links, active/approved filter)
-- `/admin/services` — modified (status filter, approve quick-action)
-- `/admin/services/[id]/edit` — modified (`custom_entry_amount` field)
-
----
-
-### Task 2 — Migration 20240101000019 Exists
-
-**PASS**
-
-File confirmed present:
-```
-supabase/migrations/20240101000019_services_custom_entry_amount.sql
-```
-
-Contents:
-```sql
--- Phase 5: Marketplace Shell — add custom_entry_amount to services
-ALTER TABLE public.services ADD COLUMN IF NOT EXISTS custom_entry_amount INTEGER;
-```
-
-Additive migration — `IF NOT EXISTS` guard makes it safe to re-apply. No existing data impact.
-
-**Migration must be applied before deployment:**
-```bash
-supabase db push
-# Verify:
-SELECT column_name FROM information_schema.columns
-WHERE table_name = 'services' AND column_name = 'custom_entry_amount';
-```
-
-All 19 migrations must be applied in order.
-
----
-
-### Task 3 — No New Environment Variables
-
-**PASS — No new env vars introduced**
-
-All Phase 5 files were scanned for `process.env.` references:
-
-| File | process.env references |
+| Check | Result |
 |---|---|
-| `src/app/marketplace/[slug]/page.tsx` | None — uses `adminClient` from `src/lib/supabase/admin` |
-| `src/components/marketplace/ServiceApproveButton.tsx` | None |
-| `src/components/marketplace/ServiceWaitlistCTA.tsx` | None |
-| `src/app/actions/services.ts` (extended) | None — uses `adminClient` |
-| All modified admin pages and components | None |
+| TypeScript (`tsc --noEmit`) | 0 errors |
+| Vitest unit tests | 7/7 pass |
+| Next.js build (env vars required) | Expected failure only — no code errors |
 
-All environment variables consumed by Phase 5 are already present in `.env.local.example` from prior phases. No `.env.local.example` changes required.
+The Next.js build fails when run without environment variables because `src/lib/supabase/admin.ts` calls `createClient` at module level. This is a pre-existing condition from Phase 1. The build succeeds in any environment with env vars populated (e.g., Vercel with secrets configured).
 
 ---
 
-### Task 4 — Secrets Scan
+## Commits Made and Pushed
 
-**PASS — No hardcoded secrets found**
+### Commit 1 — Phase 6 application changes
+**SHA:** `c5e37e7`
+**Branch:** `main`
+**Remote:** `https://github.com/mansweetandsour/omni-incubator.git`
+**Message:** `feat(phase-6): polish & deploy — homepage, SEO, sitemap, loading states, mobile, RLS audit`
 
-Scanned all new and modified Phase 5 files for hardcoded credential patterns (Stripe key prefixes, Resend key prefix, Supabase JWT bearer patterns, Upstash token patterns):
+57 files changed, 3572 insertions, 1215 deletions.
 
-**New files audited:**
-- `supabase/migrations/20240101000019_services_custom_entry_amount.sql`
-- `src/app/marketplace/[slug]/page.tsx`
-- `src/components/marketplace/ServiceApproveButton.tsx`
-- `src/components/marketplace/ServiceWaitlistCTA.tsx`
+Key additions:
+- `src/app/page.tsx` — Homepage (hero, sweepstake callout, featured e-books, how it works, membership pitch, newsletter). ISR revalidate=60.
+- `src/app/sitemap.ts` — Dynamic sitemap with static + DB-driven routes (products, sample_products, services)
+- `src/app/robots.ts` — Disallows /admin/* and /profile/* for all user agents
+- `src/app/library/loading.tsx`, `src/app/library/[slug]/loading.tsx` — Library skeleton loaders
+- `src/app/(admin)/admin/orders/loading.tsx`, `products/loading.tsx`, `users/loading.tsx` — Admin skeleton loaders
+- `src/components/library/filter-sheet-trigger.tsx` — Mobile filter Sheet (shadcn Sheet, side=left)
+- `scripts/verify-rls.ts` — RLS audit script (queries pg_policies, exits 1 on DANGER)
+- `docs/runbooks/pre-launch-checklist.md` — Pre-launch checklist
+- `docs/runbooks/runbook-rls-audit.md` — RLS audit runbook
+- `vercel.json` — Security headers + webhook maxDuration=60
+- `public/og-banner.png`, `public/og-banner.svg` — OG image assets (placeholder; see E-OG below)
+- SEO: `generateMetadata()` or `metadata` const on all 12 public pages
+- Mobile: admin sidebar Sheet, admin table overflow-x-auto, library grid-cols-1→sm:grid-cols-2→lg:grid-cols-3
+- `/privacy` and `/terms` — substantive multi-section placeholder content with EXTERNAL TASK E14 notice
 
-**Modified files audited:**
-- `src/app/actions/services.ts`
-- `src/components/admin/service-form.tsx`
-- `src/components/admin/service-table.tsx`
-- `src/app/(admin)/admin/services/page.tsx`
-- `src/app/(admin)/admin/services/[id]/edit/page.tsx`
-- `src/app/marketplace/page.tsx`
-
-**Result: 0 matches.** All credential access is exclusively via environment variables read through `process.env.*` inside `src/lib/supabase/*.ts` client wrappers.
-
----
-
-### Task 5 — No Deployment Blockers
-
-**PASS**
-
-Phase 5 changes are fully contained to:
-- 1 additive DB migration (safe, `IF NOT EXISTS`)
-- 3 new source files (all client or server components; no new API routes)
-- 6 modified source files (no structural changes to existing APIs)
-
-No new Vercel config changes. No new Supabase Storage buckets. No new cloud services. No Docker/compose changes. No new external service dependencies.
+### Commit 2 — State files
+**Branch:** `main`
+**Message:** `chore: mark phase 6 complete — all phases done`
 
 ---
 
-## New Environment Variables (Phase 5)
+## Infrastructure Changes
 
-None.
+### vercel.json
+- `functions.api/webhooks/stripe/route.maxDuration: 60` — preserved from prior phases
+- Security headers on `/(.*)`):
+  - `X-Content-Type-Options: nosniff`
+  - `X-Frame-Options: DENY`
+  - `X-XSS-Protection: 1; mode=block`
+  - `Referrer-Policy: strict-origin-when-cross-origin`
+- Cache-Control for static assets: `public, max-age=31536000, immutable`
 
----
-
-## Infrastructure Resources Created or Modified
-
-| Resource | Type | Change |
-|---|---|---|
-| `supabase/migrations/20240101000019_services_custom_entry_amount.sql` | Postgres migration | New — additive `ALTER TABLE public.services ADD COLUMN IF NOT EXISTS custom_entry_amount INTEGER` |
-
----
-
-## Staging / Production URLs
-
-| Environment | URL |
-|---|---|
-| Production | `https://omniincubator.org` (pending E11 — Vercel setup) |
-| Local dev | `http://localhost:3000` |
-
-New public route: `https://omniincubator.org/marketplace/{slug}`
+### No new environment variables introduced
+All env vars remain as documented in `.env.local.example` (established Phase 1).
 
 ---
 
-## CI/CD Pipeline
+## CI/CD
 
-No changes. Deployment is via Vercel git integration (push to `main` triggers build + deploy). Build confirmed clean by QA.
+No GitHub Actions pipeline exists in this repo. Deployment is via Vercel Git integration (connect repo in Vercel dashboard — see E11 below).
+
+**Trigger:** Push to `main` branch triggers automatic Vercel deploy once integration is configured.
 
 ---
 
 ## Rollback Procedure
 
-1. In Vercel Dashboard → project → **Deployments** tab
-2. Locate the previous known-good deployment
-3. Click three-dot menu → **Promote to Production**
-4. Traffic is instantly re-routed — no rebuild required
-
-**Database rollback note:** Phase 5 includes 1 new migration. Rolling back application code while leaving the migration applied is safe — `custom_entry_amount` is an additive nullable column; prior code ignores unknown columns. A full DB rollback is not recommended unless application code is also being rolled back:
-```sql
-ALTER TABLE public.services DROP COLUMN IF EXISTS custom_entry_amount;
-```
-Only execute this if application code is also being rolled back to pre-Phase-5.
+If a bad deploy is pushed to Vercel:
+1. Vercel dashboard → Project → Deployments → select prior good deployment → "Promote to Production"
+2. Or: `git revert HEAD && git push origin main` to revert the commit and trigger a new deploy
 
 ---
 
-## External Tasks
+## External Tasks Requiring Human Action Before Production Launch
 
-No new external tasks introduced by Phase 5. All prior external tasks (E1–E20) remain as documented in `docs/runbooks/runbook-external-tasks.md`.
+| ID | Task | Owner |
+|---|---|---|
+| E1 | Create Supabase production project, run all migrations (`supabase db push`), configure storage buckets | Human |
+| E11 | Connect GitHub repo to Vercel, configure project, set all env vars, trigger first deploy | Human |
+| E12 | Configure custom domain `omniincubator.org` in Vercel + DNS provider | Human |
+| E13 | Activate Stripe live mode, copy live keys to Vercel environment variables, register webhook endpoint for production URL | Human |
+| E14 | Legal review and approval of `/privacy`, `/terms`, and `/sweepstakes/rules` placeholder content — replace with legally reviewed text before launch | Human (Legal) |
+| E15 | Create the first sweepstake in `/admin/sweepstakes` | Human |
+| E16 | Upload first e-book PDF and cover in `/admin/products` | Human |
+| E17 | Upload first sample product file in `/admin/sample-products` | Human |
+| E-OG | Replace `public/og-banner.png` with production-quality 1200×630 OG banner design | Human (Designer) |
+
+---
+
+## Environment Variables Required in Vercel (Production)
+
+All variables from `.env.local.example` must be set in Vercel project settings before first deploy:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `STRIPE_SECRET_KEY` (live mode `sk_live_...`)
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (live mode `pk_live_...`)
+- `STRIPE_WEBHOOK_SECRET` (from Stripe dashboard after registering production webhook endpoint)
+- `STRIPE_MEMBERSHIP_MONTHLY_PRICE_ID`
+- `STRIPE_MEMBERSHIP_ANNUAL_PRICE_ID`
+- `RESEND_API_KEY`
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+- `BEEHIIV_API_KEY`
+- `BEEHIIV_PUBLICATION_ID`
+- `NEXT_PUBLIC_REWARDFUL_KEY`
+- `SENTRY_DSN`
+- `NEXT_PUBLIC_APP_URL` (set to `https://omniincubator.org`)
+
+---
+
+## Post-Deploy Health Checks
+
+Once deployed, verify:
+1. `https://omniincubator.org` — homepage loads with all 5 sections
+2. `https://omniincubator.org/sitemap.xml` — returns valid XML
+3. `https://omniincubator.org/robots.txt` — disallows /admin/ and /profile/
+4. Email OTP login flow completes end-to-end
+5. Stripe Checkout creates a subscription in test mode first, then live mode
+6. Stripe webhook delivers to `https://omniincubator.org/api/webhooks/stripe` (check Stripe dashboard)
+7. Run `npx tsx scripts/verify-rls.ts` against production Supabase (see `docs/runbooks/runbook-rls-audit.md`)
+8. Run through `docs/runbooks/pre-launch-checklist.md` in full before opening to public traffic

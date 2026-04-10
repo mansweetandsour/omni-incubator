@@ -103,7 +103,7 @@ PRD excerpt:
   Exit criteria: Marketplace shows Coming Soon with service previews. Admin can manage services.
 
 ## Phase 6: Polish & Deploy
-Status: PENDING
+Status: COMPLETE
 Dependencies: Phase 5 complete
 PRD excerpt:
   Homepage /: hero (headline, subheadline, CTA buttons Browse Library + Join Now), current sweepstake prize callout, featured e-books, how it works section.
