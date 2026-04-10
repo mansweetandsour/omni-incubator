@@ -1,4 +1,10 @@
+import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
+
+export const metadata: Metadata = {
+  title: 'My Profile',
+  robots: { index: false },
+}
 import { createClient } from '@/lib/supabase/server'
 import { ProfileForm } from '@/components/profile/profile-form'
 

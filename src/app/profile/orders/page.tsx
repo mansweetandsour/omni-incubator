@@ -1,4 +1,10 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
+
+export const metadata: Metadata = {
+  title: 'My Orders',
+  robots: { index: false },
+}
 import { adminClient } from '@/lib/supabase/admin'
 import { OrderHistory } from '@/components/billing/order-history'
 

@@ -1,5 +1,11 @@
+import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+
+export const metadata: Metadata = {
+  title: 'My Entries',
+  robots: { index: false },
+}
 import { createClient } from '@/lib/supabase/server'
 import { adminClient } from '@/lib/supabase/admin'
 

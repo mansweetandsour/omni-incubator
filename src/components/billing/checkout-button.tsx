@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 
@@ -59,11 +60,13 @@ export function CheckoutButton({
       const data = await res.json()
       if (!res.ok) {
         setError(data.error ?? 'Checkout failed. Please try again.')
+        toast.error(data.error ?? 'Checkout failed. Please try again.')
         return
       }
       window.location.href = data.url
     } catch {
       setError('Something went wrong. Please try again.')
+      toast.error('Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }

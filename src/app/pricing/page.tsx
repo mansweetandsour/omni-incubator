@@ -1,8 +1,14 @@
+import type { Metadata } from 'next'
 import { createClient } from '@/lib/supabase/server'
 import { isActiveMember } from '@/lib/membership'
 import { PricingCards } from '@/components/billing/pricing-cards'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata: Metadata = {
+  title: 'Membership Plans',
+  description: 'Join Omni Incubator and unlock 50% off all e-books, sweepstakes entries, and more. Start with a free 7-day trial.',
+}
 
 export default async function PricingPage() {
   const supabase = await createClient()

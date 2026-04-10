@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
@@ -6,6 +7,11 @@ import { LeadCaptureForm } from '@/components/sweepstakes/LeadCapturePopup'
 import { EntryBadge } from '@/components/sweepstakes/EntryBadge'
 
 export const revalidate = 60
+
+export const metadata: Metadata = {
+  title: 'Service Marketplace',
+  description: 'A curated marketplace of vetted service providers to help you build, scale, and operate your business.',
+}
 
 export default async function MarketplacePage() {
   const supabase = await createClient()

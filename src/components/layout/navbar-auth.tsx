@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import {
@@ -46,8 +47,7 @@ export function NavbarAuth({ user, username, avatarUrl }: NavbarAuthProps) {
           aria-label="Account menu"
         >
           {avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatarUrl} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />
+            <Image src={avatarUrl} alt="Avatar" width={32} height={32} className="w-8 h-8 rounded-full object-cover" unoptimized />
           ) : (
             <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold">
               {displayInitial}

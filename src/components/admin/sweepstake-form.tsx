@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { createSweepstake, updateSweepstake } from '@/app/(admin)/admin/sweepstakes/actions'
 
 interface SweepstakeRow {
@@ -153,8 +154,9 @@ export function SweepstakeForm({ sweepstake }: SweepstakeFormProps) {
         <button
           type="submit"
           disabled={loading}
-          className="px-4 py-2 rounded bg-zinc-900 text-white text-sm hover:bg-zinc-700 disabled:opacity-50"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded bg-zinc-900 text-white text-sm hover:bg-zinc-700 disabled:opacity-50"
         >
+          {loading && <Loader2 className="size-4 animate-spin" />}
           {loading ? 'Saving…' : sweepstake ? 'Save Changes' : 'Create Sweepstake'}
         </button>
         <button

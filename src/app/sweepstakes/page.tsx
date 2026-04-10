@@ -1,8 +1,27 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import { adminClient } from '@/lib/supabase/admin'
 import { CountdownTimer } from '@/components/sweepstakes/CountdownTimer'
 
 export const revalidate = 60
+
+export async function generateMetadata(): Promise<Metadata> {
+  const { data: activeSweepstake } = await adminClient
+    .from('sweepstakes')
+    .select('prize_description')
+    .eq('status', 'active')
+    .maybeSingle()
+  if (activeSweepstake?.prize_description) {
+    return {
+      title: `Win ${activeSweepstake.prize_description} | Omni Incubator Sweepstakes`,
+      description: `Enter for a chance to win ${activeSweepstake.prize_description}. No purchase necessary.`,
+    }
+  }
+  return {
+    title: 'Enter Our Sweepstakes',
+    description: 'Enter Omni Incubator sweepstakes for a chance to win. No purchase necessary.',
+  }
+}
 
 export default async function SweepstakesPage() {
   const [activeSweepstakeResult, drawnSweepstakesResult, sampleProductsResult] =

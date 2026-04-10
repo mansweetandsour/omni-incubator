@@ -24,13 +24,14 @@ interface ProductCardProps {
     hasActiveSweepstake: boolean
     activeMultiplier: number | null
   } | null
+  priority?: boolean
 }
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`
 }
 
-export function ProductCard({ product, sweepData }: ProductCardProps) {
+export function ProductCard({ product, sweepData, priority = false }: ProductCardProps) {
   const authors =
     product.ebook.authors.length > 0 ? product.ebook.authors.join(', ') : 'Unknown'
   const category = CATEGORY_LABELS[product.ebook.category] ?? product.ebook.category
@@ -49,6 +50,7 @@ export function ProductCard({ product, sweepData }: ProductCardProps) {
             fill
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
             className="object-cover"
+            priority={priority}
           />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-zinc-200 to-zinc-300 dark:from-zinc-700 dark:to-zinc-800 flex items-center justify-center">

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -352,6 +353,7 @@ export function ProductForm({ product }: ProductFormProps) {
       {/* Actions */}
       <div className="flex items-center gap-3 pt-2">
         <Button type="submit" disabled={isPending}>
+          {isPending && <Loader2 className="mr-2 size-4 animate-spin" />}
           {isPending ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Product'}
         </Button>
         {isEdit && (

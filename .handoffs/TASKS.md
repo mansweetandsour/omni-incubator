@@ -1,424 +1,339 @@
-# TASKS.md — Phase 5: Marketplace Shell
+# TASKS.md — Phase 6: Polish & Deploy
 **Architect Agent Output**
 **Date:** 2026-04-09
-**Phase:** 5 — Marketplace Shell
+**Phase:** 6 — Polish & Deploy
 
-Tasks are ordered by dependency. Backend tasks must complete before Frontend tasks that depend on them.
+All tasks reference SPEC.md sections. Complete tasks in order within each section — tasks marked with a dependency note must not start until the dependency is complete.
+
+---
+
+## [DEVOPS] Tasks
+
+### D1 — Add `tsx` to devDependencies
+**File:** `package.json`
+**Action:** Add `"tsx": "^4.19.2"` to `devDependencies`.
+**Verify:** `npx tsx --version` prints a version number.
+**Spec ref:** SPEC.md §2, §3.38
+**Prerequisite for:** D3
+
+---
+
+### D2 — Create static OG banner asset
+**File:** `public/og-banner.png`
+**Action:** Create a 1200x630px PNG branded placeholder. Minimum: solid color background + "Omni Incubator" text. Any tool acceptable (Figma, Canva, Canvas script).
+**Verify:** File exists at `public/og-banner.png`, dimensions are 1200x630, file size > 1KB.
+**Spec ref:** SPEC.md §3.37
+**Prerequisite for:** F3, F9
+
+---
+
+### D3 — Create RLS audit script
+**File:** `scripts/verify-rls.ts` (new)
+**Action:** Implement per SPEC.md §3.31. Must accept `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` env vars, query the 11 required tables (profiles, products, ebooks, user_ebooks, orders, subscriptions, sweepstakes, sweepstake_entries, services, sample_products, lead_submissions), and output a categorized OK/DANGER/WARNING report. Exit cleanly with a descriptive error if env vars are missing.
+**Verify:** `npx tsx scripts/verify-rls.ts` runs without crashing. If env vars are missing, exits with a clear error message.
+**Spec ref:** SPEC.md §3.31
+**Depends on:** D1
+**Prerequisite for:** D5
+
+---
+
+### D4 — Update vercel.json
+**File:** `vercel.json`
+**Action:** Add `headers` array with security headers and static asset caching per SPEC.md §3.35. Preserve existing `functions` block unchanged.
+**Verify:** JSON is valid. `functions["src/app/api/webhooks/stripe/route.ts"].maxDuration` is still 60. Four security headers present on `"/(.*)"` source. Cache-Control header present on static assets source.
+**Spec ref:** SPEC.md §3.35
+
+---
+
+### D5 — Create RLS audit runbook
+**File:** `docs/runbooks/runbook-rls-audit.md` (new)
+**Action:** Create a Markdown runbook documenting: (1) prerequisites — SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars, (2) how to run the script (`npx tsx scripts/verify-rls.ts`), (3) how to interpret OK/DANGER/WARNING output, (4) corrective actions for each category.
+**Verify:** File exists. Contains headings covering each of the 4 documented topics.
+**Spec ref:** SPEC.md §3.32
+**Depends on:** D3
+
+---
+
+### D6 — Create pre-launch checklist runbook
+**File:** `docs/runbooks/pre-launch-checklist.md` (new)
+**Action:** Create Markdown checklist with `- [ ]` items grouped into exactly 10 sections: Auth, E-books, Checkout, Webhooks, Downloads, Profile, Sweepstakes, Sample Product, Admin, Emails. Each section must have at minimum 3 checklist items covering the scenarios in PRD R11.
+**Verify:** File exists. Contains 10 `##` headings. Contains `- [ ]` items in each section.
+**Spec ref:** SPEC.md §3.36
 
 ---
 
 ## [BACKEND] Tasks
 
-### B1 — New Migration: Add `custom_entry_amount` to `services` table
-
-**File:** `supabase/migrations/20240101000019_services_custom_entry_amount.sql`
-
-Create this file with:
-```sql
--- Phase 5: Marketplace Shell — add custom_entry_amount to services
-ALTER TABLE public.services ADD COLUMN IF NOT EXISTS custom_entry_amount INTEGER;
-```
-
-This is a no-op if column already exists. No seed data. No RLS changes.
-
-**Verification:** File exists and contains the ALTER TABLE statement.
+### B1 — sitemap.ts
+**File:** `src/app/sitemap.ts` (new)
+**Action:** Implement per SPEC.md §3.15. Import `adminClient` from `@/lib/supabase/admin`. Export default async function returning `MetadataRoute.Sitemap`. Include 8 static URLs, dynamic ebook routes (`/library/{slug}`), dynamic sample product routes (`/free/{slug}`), dynamic service routes (`/marketplace/{slug}`). Exclude all `/admin/*` and `/profile/*`.
+**Verify:** `GET /sitemap.xml` returns valid XML containing `/library/` entries and static routes. Build passes.
+**Spec ref:** SPEC.md §3.15
 
 ---
 
-### B2 — Extend `updateService` Server Action to handle `custom_entry_amount` and add `revalidatePath`
-
-**File:** `src/app/actions/services.ts`
-
-1. Add `import { revalidatePath } from 'next/cache'` at the top of the file if not already present. (Check: currently the file does not import `revalidatePath`.)
-
-2. In `updateService`, after the `is_coming_soon` extraction (line ~117), add:
-```typescript
-const cea_str = formData.get('custom_entry_amount')?.toString()
-let custom_entry_amount: number | null = null
-if (cea_str && cea_str.trim() !== '') {
-  const ceaParsed = parseInt(cea_str, 10)
-  if (isNaN(ceaParsed) || ceaParsed < 1) return { error: 'Entry amount must be a positive integer' }
-  custom_entry_amount = ceaParsed
-}
-```
-
-3. Add `custom_entry_amount` to the `adminClient.update({...})` object (after `is_coming_soon`).
-
-4. After the update succeeds (before `return { ok: true }`), add:
-```typescript
-revalidatePath('/admin/services')
-revalidatePath('/marketplace')
-```
-
-**Verification:** `updateService` with `custom_entry_amount='50'` in FormData updates the DB and both paths are revalidated.
-
----
-
-### B3 — Add `approveService` Server Action
-
-**File:** `src/app/actions/services.ts`
-
-Add as a new export after `archiveService`:
-
-```typescript
-export async function approveService(id: string): Promise<{ ok: true } | { error: string }> {
-  const auth = await getAdminUser()
-  if (!auth.ok) return { error: auth.error }
-
-  const { error } = await adminClient
-    .from('services')
-    .update({ status: 'approved' })
-    .eq('id', id)
-
-  if (error) return { error: error.message }
-  revalidatePath('/admin/services')
-  return { ok: true }
-}
-```
-
-`revalidatePath` is already imported from task B2.
-
-**Verification:** Function exported, TypeScript compiles.
+### B2 — robots.ts
+**File:** `src/app/robots.ts` (new)
+**Action:** Implement per SPEC.md §3.16. Export default function returning `MetadataRoute.Robots`. Disallow `/admin/` and `/profile/`. Include sitemap URL `https://omniincubator.org/sitemap.xml`.
+**Verify:** `GET /robots.txt` returns content with `Disallow: /admin/` and `Disallow: /profile/`. Build passes.
+**Spec ref:** SPEC.md §3.16
 
 ---
 
 ## [FRONTEND] Tasks
 
-### F1 — New Component: `ServiceApproveButton`
-
-**File:** `src/components/marketplace/ServiceApproveButton.tsx` (NEW — create directory if needed)
-
-Create the full file per SPEC.md Section 7. It is a `'use client'` component that calls `approveService` via `useTransition`.
-
-```typescript
-'use client'
-
-import { useTransition } from 'react'
-import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
-import { approveService } from '@/app/actions/services'
-
-export function ServiceApproveButton({ serviceId }: { serviceId: string }) {
-  const [isPending, startTransition] = useTransition()
-
-  function handleApprove() {
-    startTransition(async () => {
-      const result = await approveService(serviceId)
-      if ('error' in result) {
-        toast.error(result.error)
-      } else {
-        toast.success('Service approved')
-      }
-    })
-  }
-
-  return (
-    <Button size="sm" variant="outline" disabled={isPending} onClick={handleApprove}>
-      {isPending ? 'Approving…' : 'Approve'}
-    </Button>
-  )
-}
-```
-
-**Verification:** File exists, TypeScript compiles, no lint errors.
+Tasks can be parallelized within the same group where no dependency note is present.
 
 ---
 
-### F2 — New Component: `ServiceWaitlistCTA`
-
-**File:** `src/components/marketplace/ServiceWaitlistCTA.tsx` (NEW)
-
-```typescript
-'use client'
-
-import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { LeadCaptureForm } from '@/components/sweepstakes/LeadCapturePopup'
-
-export function ServiceWaitlistCTA() {
-  const [showForm, setShowForm] = useState(false)
-
-  return (
-    <div className="flex flex-col items-center gap-4 w-full max-w-sm">
-      {!showForm && (
-        <Button
-          onClick={() => setShowForm(true)}
-          variant="default"
-          className="w-full"
-        >
-          Coming Soon — Join the waitlist
-        </Button>
-      )}
-      {showForm && (
-        <div className="w-full">
-          <LeadCaptureForm source="marketplace_coming_soon" />
-        </div>
-      )}
-    </div>
-  )
-}
-```
-
-**Verification:** File exists, TypeScript compiles.
+### F1 — Root layout metadata upgrade
+**File:** `src/app/layout.tsx`
+**Action:** Replace flat `metadata` export with object containing `title.default: 'Omni Incubator'`, `title.template: '%s | Omni Incubator'`, `description`, and `openGraph` with siteName and static OG image per SPEC.md §3.2. The `Metadata` import from `next` is already present.
+**Verify:** `npx tsc --noEmit` passes. `metadata.title` is an object not a string.
+**Spec ref:** SPEC.md §3.2
+**Note:** Must be done before F3 to avoid title template conflicts.
 
 ---
 
-### F3 — Fix `ServiceForm`: rate type options, status options, status badge, `custom_entry_amount` field
-
-**File:** `src/components/admin/service-form.tsx`
-
-**3a. Fix `Service` interface** — add `custom_entry_amount: number | null`:
-```typescript
-interface Service {
-  // ... existing fields ...
-  custom_entry_amount: number | null  // ADD THIS
-}
-```
-
-**3b. Fix rate type select options** (around line 143–148):
-Replace:
-```tsx
-<option value="project">Project</option>
-<option value="retainer">Retainer</option>
-```
-With:
-```tsx
-<option value="fixed">Fixed</option>
-<option value="monthly">Monthly</option>
-```
-
-**3c. Fix status select options** (around line 220–228):
-Replace:
-```tsx
-<option value="pending">Pending</option>
-<option value="active">Active</option>
-<option value="paused">Paused</option>
-```
-With:
-```tsx
-<option value="pending">Pending</option>
-<option value="approved">Approved</option>
-<option value="active">Active</option>
-<option value="suspended">Suspended</option>
-```
-
-**3d. Add status badge** — in the status section (edit mode), add a color Badge above the select. Replace the label div:
-```tsx
-{isEdit && (
-  <div className="space-y-1">
-    <div className="flex items-center gap-2">
-      <label className="text-sm font-medium" htmlFor="status">Status</label>
-      <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${
-        service.status === 'approved' ? 'bg-blue-100 text-blue-800 border-blue-200' :
-        service.status === 'active' ? 'bg-green-100 text-green-800 border-green-200' :
-        service.status === 'suspended' ? 'bg-red-100 text-red-800 border-red-200' :
-        'bg-amber-100 text-amber-800 border-amber-200'
-      }`}>
-        {service.status ?? 'pending'}
-      </span>
-    </div>
-    <select ... >
-```
-
-**3e. Add `custom_entry_amount` input** — add after the Tags section and before the Status section:
-```tsx
-{/* Custom Entry Amount */}
-<div className="space-y-1">
-  <label className="text-sm font-medium" htmlFor="custom_entry_amount">
-    Entry Amount <span className="text-xs text-zinc-400">(optional)</span>
-  </label>
-  <Input
-    id="custom_entry_amount"
-    name="custom_entry_amount"
-    type="number"
-    min="1"
-    defaultValue={service?.custom_entry_amount ?? ''}
-    placeholder="e.g. 50"
-  />
-</div>
-```
-
-**Verification:** Form renders with correct options. TypeScript compiles. Saving a service with `rate_type='fixed'` and `custom_entry_amount=50` does not produce a DB error.
+### F2 — Admin layout metadata + mobile padding
+**File:** `src/app/(admin)/layout.tsx`
+**Action:** (a) Add `import type { Metadata } from 'next'` and `export const metadata: Metadata = { robots: { index: false, follow: false } }` per SPEC.md §3.3. (b) Change `<main className="flex-1 overflow-y-auto p-8">` to `<main className="flex-1 overflow-y-auto p-8 pt-16 md:pt-8">` per SPEC.md §3.25.
+**Verify:** Build passes. Admin pages emit robots noindex. Content not obscured by mobile hamburger on small viewports.
+**Spec ref:** SPEC.md §3.3, §3.25
 
 ---
 
-### F4 — Fix `ServiceTable`: `formatRate` function and add `ServiceApproveButton`
-
-**File:** `src/components/admin/service-table.tsx`
-
-**4a. Replace `formatRate` function:**
-```typescript
-function formatRate(service: Service): string {
-  if (service.rate_label) return service.rate_label
-  if (service.rate_type === 'custom' || service.rate_cents == null) return 'Custom'
-  const amount = `$${(service.rate_cents / 100).toLocaleString('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  })}`
-  if (service.rate_type === 'hourly') return `${amount}/hr`
-  if (service.rate_type === 'fixed') return `${amount} fixed`
-  if (service.rate_type === 'monthly') return `${amount}/mo`
-  return amount
-}
-```
-
-**4b. Add import:**
-```typescript
-import { ServiceApproveButton } from '@/components/marketplace/ServiceApproveButton'
-```
-
-**4c. Add Approve button in actions cell** — in the `<TableCell className="text-right space-x-2">`, add before the Archive button:
-```tsx
-{!isArchived && service.status === 'pending' && (
-  <ServiceApproveButton serviceId={service.id} />
-)}
-```
-
-**Verification:** Approve button appears on pending rows only. `formatRate` returns correct suffix for fixed/monthly.
+### F3 — Homepage rewrite
+**File:** `src/app/page.tsx`
+**Action:** Complete rewrite per SPEC.md §3.1. Add `export const revalidate = 60`. Implement all 5 sections: Hero (with conditional prize callout), Featured E-books (using `ProductCard` with correct prop shape), How It Works (3-step static grid), Membership Pitch (static card with $15/mo pricing), Newsletter Callout (static, CTA to /pricing). Both data queries use `adminClient`. Include static `metadata` export.
+**Verify:** `GET /` renders all 5 sections. Prize callout shows `prize_description` when active sweepstake exists; fallback text when none. `ProductCard` renders for featured ebooks. TypeScript compiles.
+**Spec ref:** SPEC.md §3.1
+**Depends on:** F1 (root layout must use template), D2 (OG banner asset)
 
 ---
 
-### F5 — Update Admin Services List Page: status filter and filtered query
-
-**File:** `src/app/(admin)/admin/services/page.tsx`
-
-Replace the entire file with:
-
-```typescript
-import Link from 'next/link'
-import { buttonVariants } from '@/components/ui/button'
-import { ServiceTable } from '@/components/admin/service-table'
-import { adminClient } from '@/lib/supabase/admin'
-
-interface AdminServicesPageProps {
-  searchParams: Promise<{ status?: string }>
-}
-
-export default async function AdminServicesPage({ searchParams }: AdminServicesPageProps) {
-  const { status: statusFilter } = await searchParams
-
-  let query = adminClient
-    .from('services')
-    .select('id, title, category, rate_type, rate_cents, rate_label, status, is_coming_soon, deleted_at')
-    .order('created_at', { ascending: false })
-
-  if (statusFilter === 'pending') {
-    query = (query as typeof query).eq('status', 'pending').is('deleted_at', null)
-  } else if (statusFilter === 'active') {
-    query = (query as typeof query).eq('status', 'active').is('deleted_at', null)
-  }
-
-  const { data: services } = await query
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Services</h1>
-        <Link href="/admin/services/new" className={buttonVariants()}>
-          New Service
-        </Link>
-      </div>
-
-      {/* Status filter */}
-      <div className="flex gap-2 flex-wrap">
-        <Link
-          href="/admin/services"
-          className={buttonVariants({ variant: !statusFilter ? 'default' : 'outline', size: 'sm' })}
-        >
-          All
-        </Link>
-        <Link
-          href="/admin/services?status=pending"
-          className={buttonVariants({ variant: statusFilter === 'pending' ? 'default' : 'outline', size: 'sm' })}
-        >
-          Pending Approval
-        </Link>
-        <Link
-          href="/admin/services?status=active"
-          className={buttonVariants({ variant: statusFilter === 'active' ? 'default' : 'outline', size: 'sm' })}
-        >
-          Active
-        </Link>
-      </div>
-
-      {services && services.length > 0 ? (
-        <ServiceTable services={services} />
-      ) : (
-        <p className="text-zinc-500">No services found.</p>
-      )}
-    </div>
-  )
-}
-```
-
-**Note on query chaining:** The Supabase query builder returns a new type with each chained call. Use the pattern of re-assigning `query` with cast. Alternatively, build separate queries for each filter case. The Backend agent must choose whichever approach TypeScript accepts without errors. The cleaner pattern:
-
-```typescript
-const baseQuery = adminClient
-  .from('services')
-  .select('id, title, category, rate_type, rate_cents, rate_label, status, is_coming_soon, deleted_at')
-  .order('created_at', { ascending: false })
-
-const { data: services } = statusFilter === 'pending'
-  ? await baseQuery.eq('status', 'pending').is('deleted_at', null)
-  : statusFilter === 'active'
-    ? await baseQuery.eq('status', 'active').is('deleted_at', null)
-    : await baseQuery
-```
-
-Use whichever compiles cleanly.
-
-**Verification:** Navigating to `?status=pending` shows only pending services. `?status=active` shows only active. No param shows all.
+### F4 — Library page: metadata + grid fix + mobile sidebar
+**File:** `src/app/library/page.tsx`
+**Action:** (a) Add static `metadata` export per SPEC.md §3.4. (b) Fix grid class from `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4` to `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4` per SPEC.md §3.26. (c) Replace desktop-only FilterSidebar section: add `<div className="hidden md:block">` wrapper around existing Suspense/FilterSidebar; add `<div className="md:hidden mb-4"><FilterSheetTrigger /></div>` above the product grid per SPEC.md §3.24. (d) Add index param to productCards.map and pass `priority={i < 4}` to ProductCard per SPEC.md §3.30.
+**Verify:** At 375px viewport, grid renders 1 column. "Filters" button visible on mobile. Static sidebar visible on desktop. Priority prop passes to first 4 cards. TypeScript compiles.
+**Spec ref:** SPEC.md §3.4, §3.24, §3.26, §3.30
+**Depends on:** F5 (FilterSheetTrigger), F13 (ProductCard priority prop)
 
 ---
 
-### F6 — New Service Detail Page: `/marketplace/[slug]`
-
-**File:** `src/app/marketplace/[slug]/page.tsx` (NEW — create directory)
-
-Create the full file per SPEC.md Section 8. Key points:
-- `export const revalidate = 60`
-- Fetch using `adminClient` (not `createClient`) — public page but needs reliable data access without cookie auth context.
-- Status gate: `notFound()` if `status !== 'active' && status !== 'approved'`.
-- Provider join: `.select('*, profiles!provider_id(display_name)')`.
-- `formatServiceRate` helper function defined in the file.
-- Coming Soon overlay: CSS `absolute inset-0` overlay.
-- `generateMetadata` exported.
-- Entry badge guarded with null check.
-- Tags rendered with optional chaining.
-
-See SPEC.md Section 8 for the complete file content.
-
-**Verification:**
-- `/marketplace/[slug]` with active service → 200, content visible.
-- `/marketplace/[slug]` with pending service → 404.
-- Rate display correct for all rate types.
-- Coming Soon overlay visible when `is_coming_soon=true`.
-- Clicking CTA shows LeadCaptureForm inline.
+### F5 — Filter sheet trigger component
+**File:** `src/components/library/filter-sheet-trigger.tsx` (new)
+**Action:** Create `'use client'` component per SPEC.md §3.24. Import `Sheet`, `SheetContent`, `SheetTrigger`, `SheetTitle` from `@/components/ui/sheet`. Import `FilterSidebar` from `./filter-sidebar`. Import `SlidersHorizontal` from `lucide-react`. Use `useState` for open/close. Button has `h-10` height (meets 44px touch target). Sheet side is `"left"` with `w-72 overflow-y-auto`.
+**Verify:** Component renders without errors. Sheet opens when button is clicked. FilterSidebar inside Sheet responds to filter changes. TypeScript compiles.
+**Spec ref:** SPEC.md §3.24
+**Prerequisite for:** F4
 
 ---
 
-### F7 — Update Marketplace Page: add entry badges and card links
+### F6 — Library slug page generateMetadata
+**File:** `src/app/library/[slug]/page.tsx`
+**Action:** Add `import type { Metadata } from 'next'`. Add `generateMetadata` async function per SPEC.md §3.5. Use already-imported `createClient`. Query `products` for `title, description, cover_image_url` by slug with `is_active=true` and `deleted_at IS NULL`. Return metadata with `title`, `description`, and `openGraph.images` using `cover_image_url` if present, else fallback `/og-banner.png`.
+**Verify:** TypeScript compiles. Page has correct `<title>` and `<meta property="og:image">` when slug is valid. Returns `title: 'E-book Not Found'` when slug does not exist.
+**Spec ref:** SPEC.md §3.5
 
+---
+
+### F7 — Pricing page metadata
+**File:** `src/app/pricing/page.tsx`
+**Action:** Add `import type { Metadata } from 'next'`. Add `export const metadata: Metadata = { title: 'Membership Plans', description: '...' }` per SPEC.md §3.6.
+**Verify:** Page `<title>` renders as "Membership Plans | Omni Incubator". TypeScript compiles.
+**Spec ref:** SPEC.md §3.6
+
+---
+
+### F8 — Marketplace page metadata
 **File:** `src/app/marketplace/page.tsx`
-
-Replace the entire file with the updated version from SPEC.md Section 8 (Modified marketplace page). Key changes:
-1. Add `Suspense` and `EntryBadge` imports.
-2. Update query select to include `custom_entry_amount` and `slug`.
-3. Add `.in('status', ['active', 'approved'])` filter to show only visible services.
-4. Wrap each card with `<Link href={/marketplace/${service.slug}}>`.
-5. Add `EntryBadge` inside each card with null guard.
-
-**Verification:**
-- Service cards link to `/marketplace/[slug]`.
-- Cards with `custom_entry_amount > 0` show entry badge.
-- Cards with `custom_entry_amount = null` show no entry badge.
+**Action:** Add `import type { Metadata } from 'next'`. Add `export const metadata: Metadata = { title: 'Service Marketplace', description: '...' }` per SPEC.md §3.7.
+**Verify:** Page `<title>` renders as "Service Marketplace | Omni Incubator". TypeScript compiles.
+**Spec ref:** SPEC.md §3.7
 
 ---
 
-## Completion Checklist
+### F9 — Marketplace slug page OG image
+**File:** `src/app/marketplace/[slug]/page.tsx`
+**Action:** In the existing `generateMetadata`, augment the return when service is found to add `openGraph: { images: [{ url: '/og-banner.png', width: 1200, height: 630 }] }` per SPEC.md §3.8. Keep existing `title` and `description` fields.
+**Verify:** TypeScript compiles. Build passes.
+**Spec ref:** SPEC.md §3.8
+**Depends on:** D2
 
-After all tasks complete:
+---
 
-1. `node node_modules/typescript/bin/tsc --noEmit` — 0 errors
-2. `NEXT_PUBLIC_SUPABASE_URL=https://dummy.supabase.co NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy SUPABASE_SERVICE_ROLE_KEY=dummy NEXT_PUBLIC_SITE_URL=https://omniincubator.org node node_modules/next/dist/bin/next build` — exits 0
+### F10 — Sweepstakes page generateMetadata
+**File:** `src/app/sweepstakes/page.tsx`
+**Action:** Add `import type { Metadata } from 'next'`. Add async `generateMetadata` function per SPEC.md §3.9 that queries `adminClient` (already imported) for active sweepstake `prize_description`. Dynamic title uses `prize_description`. Fallback title: "Enter Our Sweepstakes".
+**Verify:** TypeScript compiles. When active sweepstake has prize_description, title includes it. Fallback renders correctly.
+**Spec ref:** SPEC.md §3.9
+
+---
+
+### F11 — Static metadata on remaining pages (batch)
+**Files (all independent, can be done in parallel):**
+- `src/app/sweepstakes/rules/page.tsx` — title: "Official Sweepstakes Rules"
+- `src/app/login/page.tsx` — title: "Sign In"
+- `src/app/profile/page.tsx` — title: "My Profile", robots: { index: false }
+- `src/app/profile/ebooks/page.tsx` — title: "My E-books", robots: { index: false }
+- `src/app/profile/orders/page.tsx` — title: "My Orders", robots: { index: false }
+- `src/app/profile/entries/page.tsx` — title: "My Entries", robots: { index: false }
+- `src/app/profile/subscription/page.tsx` — title: "My Subscription", robots: { index: false }
+
+**Action:** Add `import type { Metadata } from 'next'` and appropriate `export const metadata: Metadata` to each file. Profile pages must include `robots: { index: false }`.
+**Verify:** Each page has a unique `<title>`. Profile pages have `<meta name="robots" content="noindex">`. TypeScript compiles.
+**Spec ref:** SPEC.md §3.10–3.12
+
+---
+
+### F12 — Privacy and Terms page content rewrite
+**Files:**
+- `src/app/privacy/page.tsx`
+- `src/app/terms/page.tsx`
+
+**Action:** Rewrite both pages with substantive placeholder content per SPEC.md §3.33 and §3.34.
+- **Privacy:** Outer wrapper `<div className="container mx-auto max-w-3xl py-16 px-4">`. `<h1>Privacy Policy</h1>`. Amber callout with placeholder notice. 5 `<section>` blocks with `<h2>`: (1) Data We Collect, (2) How We Use Your Information, (3) Third-Party Services — body must name Stripe, Supabase, Resend, Beehiiv, Rewardful, (4) Cookies and Tracking, (5) Contact Us. Each body paragraph includes `{PLACEHOLDER — EXTERNAL TASK E14: Have legal review this content}`.
+- **Terms:** Same wrapper pattern. `<h1>Terms of Service</h1>`. 6 `<section>` blocks: (1) Acceptance of Terms, (2) Description of Services, (3) Membership Terms (trial/billing/cancellation/plan switching), (4) E-book License (personal, non-commercial, non-transferable), (5) Refund Policy, (6) Limitation of Liability. Each body includes `{PLACEHOLDER — EXTERNAL TASK E14}`.
+- Both pages: also add `export const metadata: Metadata` with `title: 'Privacy Policy'` and `title: 'Terms of Service'` respectively (import `Metadata` from `next`).
+**Verify:** Both pages render substantive content. Both contain the exact placeholder string. `<h1>` exists. TypeScript compiles.
+**Spec ref:** SPEC.md §3.33, §3.34
+
+---
+
+### F13 — ProductCard priority prop
+**File:** `src/components/library/product-card.tsx`
+**Action:** Add `priority?: boolean` to `ProductCardProps` interface. Pass `priority={priority ?? false}` to the `<Image>` component. Default is `false` — no existing call sites break.
+**Verify:** TypeScript compiles. No existing usages of `ProductCard` break (prop is optional). Build passes.
+**Spec ref:** SPEC.md §3.30
+**Prerequisite for:** F4
+
+---
+
+### F14 — Loading skeletons (5 files — all parallel)
+**Files (all new):**
+- `src/app/library/loading.tsx` — skeleton: h1 bar + search bar + sort bar + sidebar skeleton (hidden md:block) + 12 card skeletons in grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4
+- `src/app/library/[slug]/loading.tsx` — skeleton: 1/3 + 2/3 grid layout, cover aspect-[3/4] skeleton left, title/price/body skeletons right
+- `src/app/(admin)/admin/products/loading.tsx` — skeleton: h1 bar + New Product button + header row + 8 row skeletons
+- `src/app/(admin)/admin/orders/loading.tsx` — skeleton: h1 bar + header row + 8 row skeletons
+- `src/app/(admin)/admin/users/loading.tsx` — skeleton: h1 bar + search input + header row + 8 row skeletons
+
+**Action:** Create all 5 files per SPEC.md §3.17–3.21. Each imports `Skeleton` from `@/components/ui/skeleton`.
+**Verify:** All 5 files exist. Each renders `<Skeleton>` elements. TypeScript compiles.
+**Spec ref:** SPEC.md §3.17–3.21
+
+---
+
+### F15 — Admin sidebar mobile responsiveness
+**File:** `src/components/admin/admin-sidebar.tsx`
+**Action:** Complete rewrite to `'use client'` component per SPEC.md §3.25. Keep desktop static sidebar wrapped in `<aside className="hidden md:flex ...">`. Add mobile Sheet: fixed-position `<div className="md:hidden fixed top-4 left-4 z-50">` containing Sheet with hamburger trigger. Import `Sheet`, `SheetContent`, `SheetTrigger`, `SheetTitle` from `@/components/ui/sheet`. Import `Menu` from `lucide-react`. Extract `NavLinks` inner component that accepts `onNavigate?: () => void` to close Sheet on link click.
+**Verify:** Desktop (>=768px): static sidebar visible, no hamburger button. Mobile (<768px): hamburger button visible, sidebar hidden. Sheet opens on hamburger click. Nav links close Sheet on click. TypeScript compiles.
+**Spec ref:** SPEC.md §3.25
+
+---
+
+### F16 — Admin overflow-x-auto on placeholder pages + ProductTable
+**Files:**
+- `src/components/admin/product-table.tsx` — wrap `<Table>` in `<div className="overflow-x-auto">`
+- `src/app/(admin)/admin/orders/page.tsx` — wrap placeholder content in `<div className="overflow-x-auto">`
+- `src/app/(admin)/admin/ebooks/page.tsx` — wrap placeholder content in `<div className="overflow-x-auto">`
+
+**Action:** Per SPEC.md §3.27. Do NOT modify `admin/users/page.tsx` — it already has `overflow-x-auto`. Do NOT modify `admin/sweepstakes/page.tsx` — it already has `overflow-x-auto`.
+**Verify:** `admin/orders` and `admin/ebooks` pages have `overflow-x-auto` wrapper div. `ProductTable` has `overflow-x-auto` wrapper around `<Table>`. TypeScript compiles.
+**Spec ref:** SPEC.md §3.27
+
+---
+
+### F17 — Replace raw img in navbar-auth.tsx
+**File:** `src/components/layout/navbar-auth.tsx`
+**Action:** Add `import Image from 'next/image'`. Replace `<img src={avatarUrl} alt="Avatar" className="w-8 h-8 rounded-full object-cover" />` with `<Image src={avatarUrl} alt="Avatar" width={32} height={32} className="w-8 h-8 rounded-full object-cover" />`. Check `next.config.ts` for Supabase Storage hostname in `remotePatterns` — if present, no `unoptimized` needed; if absent, add `unoptimized`. Remove `eslint-disable-next-line @next/next/no-img-element` comment.
+**Verify:** No raw `<img>` in this file. ESLint passes. TypeScript compiles. Build passes.
+**Spec ref:** SPEC.md §3.28
+
+---
+
+### F18 — Replace raw img in admin users page
+**File:** `src/app/(admin)/admin/users/page.tsx`
+**Action:** Add `import Image from 'next/image'`. Replace the `<img>` avatar block (~line 170, behind eslint-disable comment) with `<Image src={user.avatar_url} alt={user.display_name ?? user.email} width={32} height={32} className="h-full w-full object-cover" />`. Remove the `eslint-disable-next-line @next/next/no-img-element` comment. Apply same `unoptimized` logic as F17.
+**Verify:** No raw `<img>` in this file. ESLint passes. TypeScript compiles.
+**Spec ref:** SPEC.md §3.28
+
+---
+
+### F19 — Checkout button toast error
+**File:** `src/components/billing/checkout-button.tsx`
+**Action:** Add `import { toast } from 'sonner'`. In `handleClick`, after `setError(data.error ?? '...')`, add `toast.error(data.error ?? 'Checkout failed. Please try again.')`. In the network catch block, add `toast.error('Something went wrong. Please try again.')`.
+**Verify:** When checkout API returns an error response, both the inline error text AND a toast notification appear. TypeScript compiles.
+**Spec ref:** SPEC.md §3.22
+
+---
+
+### F20 — Pricing cards toast error
+**File:** `src/components/billing/pricing-cards.tsx`
+**Action:** Add `import { toast } from 'sonner'`. In `handleJoin`, after `setError(...)`, call `toast.error(...)` with the same message. In the catch block, add `toast.error('Something went wrong. Please try again.')`.
+**Verify:** When membership checkout fails, toast appears. TypeScript compiles.
+**Spec ref:** SPEC.md §3.22
+
+---
+
+### F21 — Profile form Loader2 icon
+**File:** `src/components/profile/profile-form.tsx`
+**Action:** Add `import { Loader2 } from 'lucide-react'`. Update save button: `<Button type="submit" disabled={saving}>{saving && <Loader2 className="mr-2 size-4 animate-spin" />}{saving ? 'Saving...' : 'Save Profile'}</Button>`.
+**Verify:** Button shows spinner when saving is true. TypeScript compiles.
+**Spec ref:** SPEC.md §3.22
+
+---
+
+### F22 — Sweepstake form Loader2 icon
+**File:** `src/components/admin/sweepstake-form.tsx`
+**Action:** Add `import { Loader2 } from 'lucide-react'`. Modify submit button: add `inline-flex items-center gap-2` to className, add `{loading && <Loader2 className="size-4 animate-spin" />}` inside button.
+**Verify:** Submit button shows spinner during submission. TypeScript compiles.
+**Spec ref:** SPEC.md §3.22
+
+---
+
+### F23 — Product form Loader2 icon (verify + fix if needed)
+**File:** `src/components/admin/product-form.tsx`
+**Action:** Read the submit button implementation. If `disabled={isPending}` is present and a `<Loader2>` spinner already renders when `isPending === true`, no change needed — mark PASS. If spinner is absent, add `import { Loader2 } from 'lucide-react'` and add `{isPending && <Loader2 className="mr-2 size-4 animate-spin" />}` to the submit button.
+**Verify:** Submit button is disabled and shows spinner while the Server Action transition is in flight. TypeScript compiles.
+**Spec ref:** SPEC.md §3.22
+
+---
+
+### F24 — Error page "Go home" link
+**File:** `src/app/error.tsx`
+**Action:** Add `import Link from 'next/link'`. Add below the "Try again" button:
+```tsx
+<Link href="/" className="text-sm text-zinc-500 underline underline-offset-4 hover:no-underline">
+  Go home
+</Link>
+```
+**Verify:** Error page renders both "Try again" and "Go home". TypeScript compiles.
+**Spec ref:** SPEC.md §3.23
+
+---
+
+## Execution Order
+
+```
+Parallel group A (no dependencies — start immediately):
+  D1, D2, D4, D6, B1, B2, F1, F2, F5, F13, F14, F15, F16, F17, F18, F19, F20, F21, F22, F23, F24
+  F7, F8, F9 (F9 depends on D2 only), F10, F11, F12
+
+After D1:
+  D3 → D5
+
+After F1:
+  F3 (also depends on D2)
+
+After F5 AND F13:
+  F4
+
+After F15:
+  F2 (F2 depends on F15 for the mobile padding context — can parallelize if implementor reads both)
+
+Final verification (all tasks complete):
+  npm run build
+  npx tsc --noEmit
+  npx vitest run
+```

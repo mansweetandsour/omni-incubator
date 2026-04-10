@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import Link from 'next/link'
 import * as Sentry from '@sentry/nextjs'
 
 export default function ErrorPage({
@@ -23,6 +24,9 @@ export default function ErrorPage({
       >
         Try again
       </button>
+      <Link href="/" className="text-sm text-zinc-500 underline underline-offset-4 hover:no-underline">
+        Go home
+      </Link>
     </div>
   )
 }

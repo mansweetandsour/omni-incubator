@@ -1,5 +1,11 @@
+import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import LoginForm from '@/components/auth/LoginForm'
+
+export const metadata: Metadata = {
+  title: 'Sign In',
+  description: 'Sign in to your Omni Incubator account.',
+}
 import { Skeleton } from '@/components/ui/skeleton'
 
 function LoginFallback() {

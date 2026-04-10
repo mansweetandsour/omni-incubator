@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Loader2, Check } from 'lucide-react'
 
@@ -46,11 +47,13 @@ export function PricingCards({ isActiveMember, isLoggedIn }: PricingCardsProps) 
       const data = await res.json()
       if (!res.ok) {
         setError(data.error ?? 'Failed to start checkout. Please try again.')
+        toast.error(data.error ?? 'Failed to start checkout. Please try again.')
         return
       }
       window.location.href = data.url
     } catch {
       setError('Something went wrong. Please try again.')
+      toast.error('Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }

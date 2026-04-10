@@ -118,6 +118,20 @@ Authentication (Email OTP + Google OAuth), Supabase setup, middleware, profile m
 - **Admin dashboard** (`/admin`) — replaced redirect stub; stat cards for active members, revenue this month, active sweepstake summary, and lead capture totals; amber warning banner when no active sweepstake; recent orders table.
 - **`CountdownTimer` component** (`src/components/sweepstakes/CountdownTimer.tsx`) — client component; null-initialized state to avoid hydration mismatch; renders "Sweepstake ended" when past the end date.
 
+### Phase 6 — Polish & Deploy
+- **Homepage** (`/`) — ISR 60s; 5 sections: Hero (with conditional sweepstake prize callout), Featured E-books grid (up to 3 cards), How It Works (3 steps), Membership Pitch ($15/mo and $129/yr), Newsletter Callout. Replaces the two-line placeholder.
+- **SEO metadata** — `generateMetadata` or `metadata` export added to all 12 public pages. Dynamic pages (`/library/[slug]`, `/marketplace/[slug]`, `/sweepstakes`) fetch live data for OG titles and images. Profile and admin routes have `robots: noindex`.
+- **Sitemap and robots** — `src/app/sitemap.ts` generates 8 static routes + dynamic ebook, sample product, and service URLs from Supabase. `src/app/robots.ts` disallows `/admin/` and `/profile/`.
+- **Loading skeletons** — 5 `loading.tsx` files added: `/library`, `/library/[slug]`, `/admin/products`, `/admin/orders`, `/admin/users`.
+- **Mobile responsiveness** — Library filter sidebar converted to a shadcn Sheet trigger on mobile (`FilterSheetTrigger`). Admin sidebar converted to a client component with Sheet hamburger menu (`md:hidden`).
+- **next/image compliance** — All raw `<img>` tags replaced with `<Image>` from `next/image`. First 4 library cards receive `priority` prop via an optional prop on `ProductCard`. Avatar images use `unoptimized` (no `remotePatterns` configured for Supabase Storage user-uploaded URLs).
+- **Error and form polish** — `error.tsx` gets a "Go home" link. Checkout, pricing, profile save, sweepstake, and product form buttons show `Loader2` spinner on pending state. Toast error on checkout failure.
+- **Privacy and Terms pages** (`/privacy`, `/terms`) — substantive multi-section placeholder content (5 and 6 sections respectively). Both include E14 external-task callout notice.
+- **Security headers** — `vercel.json` adds 4 security headers (`X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`) on all routes, plus `Cache-Control: immutable` on static assets. `maxDuration: 60` on webhook preserved.
+- **OG banner** — `public/og-banner.png` (1200×630px, zinc background) and `public/og-banner.svg` (branded text) added as fallback OG image.
+- **RLS audit** — `scripts/verify-rls.ts` queries `pg_policies` + `pg_tables` and produces a categorized OK/DANGER/WARNING report. Exits with code 1 on DANGER conditions. Documented in `docs/runbooks/runbook-rls-audit.md`.
+- **Pre-launch checklist** — `docs/runbooks/pre-launch-checklist.md` with 10 sections covering auth, e-books, checkout, webhooks, downloads, profile, sweepstakes, sample products, admin, and emails.
+
 ### Phase 5 — Marketplace Shell
 - **Service detail page** (`/marketplace/[slug]`) — ISR 60s; 404 for `pending`/`suspended`/deleted services; rate display supporting all rate types (`hourly`, `fixed`, `monthly`, `custom`, `rate_label` override); `long_description` rendered as Markdown via `react-markdown` + `remark-gfm` in a `.prose` wrapper; provider name from `profiles` join; `<EntryBadge>` with Suspense when `custom_entry_amount > 0`; Coming Soon overlay with `<ServiceWaitlistCTA>` for `is_coming_soon` services; `generateMetadata`.
 - **Entry badges on marketplace cards** (`/marketplace`) — `custom_entry_amount` added to query; `<EntryBadge>` with Suspense on cards; service cards wrapped with `<Link>` to detail page; only `active`/`approved` services shown.
@@ -182,7 +196,7 @@ omni-incubator/
 │   │   │   ├── profile/subscription/route.ts                   # Subscription status
 │   │   │   └── subscription/portal/route.ts                    # Stripe Billing Portal session
 │   │   ├── layout.tsx              # Root layout — navbar, footer, providers
-│   │   ├── page.tsx                # Homepage (placeholder, Phase 6 content)
+│   │   ├── page.tsx                # Homepage — 5 sections, ISR 60s, sweepstake prize callout
 │   │   ├── globals.css             # Tailwind directives + shadcn/ui CSS variables
 │   │   ├── error.tsx               # Root error boundary (Sentry)
 │   │   ├── not-found.tsx           # 404 page
@@ -204,15 +218,17 @@ omni-incubator/
 │   │   ├── sweepstakes/page.tsx    # Public sweepstakes page — hero, countdown, entry methods (ISR 60s)
 │   │   ├── sweepstakes/rules/page.tsx      # Official rules (static)
 │   │   ├── profile/entries/page.tsx        # Entry stats + history (force-dynamic)
-│   │   ├── privacy/page.tsx        # Placeholder (Phase 6)
-│   │   └── terms/page.tsx          # Placeholder (Phase 6)
+│   │   ├── privacy/page.tsx        # Privacy policy — 5 sections, substantive placeholder content
+│   │   ├── terms/page.tsx          # Terms of service — 6 sections, substantive placeholder content
+│   │   ├── sitemap.ts              # Dynamic sitemap — 8 static + ebook/sample/service URLs
+│   │   └── robots.ts               # Disallows /admin/ and /profile/
 │   ├── components/
 │   │   ├── admin/                  # Admin-specific components (sidebar, forms, tables)
 │   │   ├── billing/                # Billing components (checkout button, download button, pricing cards, order history, subscription management)
 │   │   ├── sweepstakes/            # EntryBadge, MultiplierBanner, LeadCapturePopup, LeadCapturePopupWrapper, CountdownTimer
 │   │   ├── marketplace/            # ServiceApproveButton (admin approve action), ServiceWaitlistCTA (coming-soon lead capture toggle)
 │   │   ├── free/                   # LeadCaptureFormFree (sample product lead capture form)
-│   │   ├── library/                # Library page components (card, filters, search, sort, load-more)
+│   │   ├── library/                # Library page components (card, filters, search, sort, load-more, filter-sheet-trigger)
 │   │   ├── ebook/                  # E-book detail components (detail view, preview button, checkout integration)
 │   │   ├── auth/
 │   │   │   └── LoginForm.tsx       # Login state machine (client component)
@@ -246,7 +262,9 @@ omni-incubator/
 │   ├── migrations/                 # 19 timestamped SQL migration files
 │   ├── storage.md                  # Storage bucket configuration guide
 │   └── auth-config.md              # Auth configuration guide
-├── vercel.json                     # maxDuration: 60 for /api/webhooks/stripe
+├── vercel.json                     # maxDuration: 60 for /api/webhooks/stripe; security headers on all routes
+├── scripts/
+│   └── verify-rls.ts               # RLS audit script — run with: npx tsx scripts/verify-rls.ts
 ├── docs/
 │   ├── adr/                        # Architectural Decision Records
 │   └── runbooks/                   # Operational runbooks
@@ -283,3 +301,5 @@ All required variables are documented in `.env.local.example` with inline commen
 - [API Reference](docs/api-reference.md)
 - [Stripe webhook setup runbook](docs/runbooks/stripe-webhook-setup.md)
 - [Sweepstakes operations runbook](docs/runbooks/sweepstakes-operations.md)
+- [RLS audit runbook](docs/runbooks/runbook-rls-audit.md)
+- [Pre-launch checklist](docs/runbooks/pre-launch-checklist.md)

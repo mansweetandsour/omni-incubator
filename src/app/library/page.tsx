@@ -1,15 +1,22 @@
+import type { Metadata } from 'next'
 import { Suspense } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { adminClient } from '@/lib/supabase/admin'
 import { ProductCard } from '@/components/library/product-card'
 import { FilterSidebar } from '@/components/library/filter-sidebar'
+import { FilterSheetTrigger } from '@/components/library/filter-sheet-trigger'
 import { SearchInput } from '@/components/library/search-input'
 import { SortSelect } from '@/components/library/sort-select'
 import { LoadMoreButton } from '@/components/library/load-more-button'
 import { Skeleton } from '@/components/ui/skeleton'
 
 export const revalidate = 60
+
+export const metadata: Metadata = {
+  title: 'E-book Library',
+  description: 'Browse our full collection of premium e-books on business, operations, and growth.',
+}
 
 const PAGE_SIZE = 12
 
@@ -177,13 +184,19 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
       </div>
 
       <div className="flex gap-8">
-        {/* Filter sidebar */}
-        <Suspense fallback={<Skeleton className="w-56 h-96" />}>
-          <FilterSidebar />
-        </Suspense>
+        {/* Filter sidebar — desktop only */}
+        <div className="hidden md:block">
+          <Suspense fallback={<Skeleton className="w-56 h-96" />}>
+            <FilterSidebar />
+          </Suspense>
+        </div>
 
         {/* Product grid */}
         <div className="flex-1">
+          {/* Mobile filter trigger */}
+          <div className="md:hidden mb-4">
+            <FilterSheetTrigger />
+          </div>
           {productCards.length === 0 ? (
             <div className="text-center py-16">
               <p className="text-zinc-500 text-lg">No e-books match your filters.</p>
@@ -195,9 +208,9 @@ export default async function LibraryPage({ searchParams }: LibraryPageProps) {
               </Link>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-              {productCards.map((product) => (
-                <ProductCard key={product.id} product={product} sweepData={sweepData} />
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {productCards.map((product, i) => (
+                <ProductCard key={product.id} product={product} sweepData={sweepData} priority={i < 4} />
               ))}
               {hasMore && (
                 <LoadMoreButton

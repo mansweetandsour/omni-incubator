@@ -1,4 +1,10 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
+
+export const metadata: Metadata = {
+  title: 'Official Sweepstakes Rules',
+  description: 'Official rules for the Omni Incubator sweepstakes. No purchase necessary to enter.',
+}
 
 export default function SweepstakesRulesPage() {
   return (

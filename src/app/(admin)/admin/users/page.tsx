@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import Link from 'next/link'
 import { adminClient } from '@/lib/supabase/admin'
 
@@ -166,11 +167,13 @@ export default async function AdminUsersPage({ searchParams }: SearchPageProps) 
                       >
                         <div className="flex-shrink-0 h-8 w-8 rounded-full bg-zinc-200 dark:bg-zinc-700 flex items-center justify-center text-xs font-semibold overflow-hidden">
                           {user.avatar_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
+                            <Image
                               src={user.avatar_url}
                               alt={user.display_name ?? user.email}
+                              width={32}
+                              height={32}
                               className="h-full w-full object-cover"
+                              unoptimized
                             />
                           ) : (
                             <span>{initials}</span>

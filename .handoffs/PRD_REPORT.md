@@ -1,7 +1,7 @@
-# PRD_REPORT.md — Phase 5: Marketplace Shell
+# PRD_REPORT.md — Phase 6: Polish & Deploy
 **PRD Agent Output — Fortification Mode**
 **Date:** 2026-04-09
-**Phase:** 5 — Marketplace Shell
+**Phase:** 6 — Polish & Deploy
 
 ---
 
@@ -9,195 +9,315 @@
 
 **WARN**
 
-Requirements are complete and implementable. Two WARN findings are raised that the Architect must address before implementation begins. Neither is a blocker — both have clear, trivial resolutions.
+Requirements are complete, consistent, and achievable. The Architect may proceed. Several items claimed as pre-built are either missing or incomplete; the Architect must build or complete them rather than simply verify. One structural inconsistency in R6 (admin sidebar mobile claim) requires new work. All acceptance criteria are achievable within the existing codebase architecture.
 
 ---
 
 ## 2. Fortified Requirements
 
-### R1 — Service Detail Page (`/marketplace/[slug]`)
+### R1 — Homepage (Server Component, ISR revalidate: 60)
 
-- Route: `/marketplace/[slug]`, server component, `export const revalidate = 60`.
-- Fetch service by `slug` using `adminClient`. If no service found: `notFound()`. If `deleted_at IS NOT NULL`: `notFound()`.
-- Visibility gate: if `status IN ('pending', 'suspended')`: `notFound()` for public users. Only `status = 'active'` OR `status = 'approved'` renders a page.
-- Provider fetch: if `provider_id IS NOT NULL`, join or separately query `profiles` for `display_name`. May be done in a single query via PostgREST join: `.select('*, profiles!provider_id(display_name)')`.
-- Page content (always rendered for visible services, behind overlay when `is_coming_soon = true`):
-  - Service `title` as `<h1>`.
-  - Service `description` as a short paragraph (plain text).
-  - Service `long_description` rendered as Markdown. Use `react-markdown` + `remark-gfm` (both already installed from Phase 4B). Render inside a `<div className="prose prose-zinc max-w-none dark:prose-invert">` wrapper — the `.prose` utility class is already in `globals.css` from Phase 4B.
-  - Provider info: if `provider_id` is set, render "By [display_name]". Omit entirely if `provider_id` is null.
-  - Rate display — checked in this order (first match wins):
-    1. If `rate_label` is set (non-null, non-empty string): display `rate_label` verbatim.
-    2. Else if `rate_type = 'custom'` OR `rate_cents IS NULL`: display "Contact for pricing".
-    3. Else display formatted amount with suffix based on `rate_type`:
-       - `hourly` → formatted dollars + "/hr"
-       - `fixed` → formatted dollars + " fixed"
-       - `monthly` → formatted dollars + "/mo"
-       - Dollar format: `(rate_cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })` — no cents when amount is whole dollars.
-  - `category` rendered as a `<Badge variant="secondary">`.
-  - `tags` (array): each rendered as a `<Badge variant="outline">` if `tags.length > 0`.
-  - Entry badge: if `custom_entry_amount IS NOT NULL AND custom_entry_amount > 0`: render `<EntryBadge product={{ price_cents: 0, custom_entry_amount: service.custom_entry_amount }} />` wrapped in `<Suspense fallback={null}>`. **See WARN-1 — requires new migration to add `custom_entry_amount` column to services table.**
-  - Coming Soon overlay: if `is_coming_soon = true`, render a semi-transparent overlay covering the full page content below the hero section. The overlay must include a "Coming Soon" heading and the CTA button.
-  - CTA button: labeled "Coming Soon — Join the waitlist". Clicking this button reveals an inline `<LeadCaptureForm source="marketplace_coming_soon" />` rendered below the button within the overlay. The `LeadCaptureForm` is a `'use client'` component and supports `marketplace_coming_soon` source already. The toggle (show/hide form on CTA click) is implemented as a small `'use client'` wrapper component.
-  - `generateMetadata()`: `title = service.title`, `description = service.description ?? ''`.
+Replace `/` (`src/app/page.tsx`) — currently a two-line placeholder — with a full server component homepage. Export `export const revalidate = 60`.
 
-### R2 — Entry Badge on Marketplace Service Cards (`/marketplace`)
+**Sections (required, top to bottom):**
 
-- Update `src/app/marketplace/page.tsx` (Phase 2 file).
-- Update the Supabase query to also fetch `custom_entry_amount` per service: `.select('id, title, description, category, is_coming_soon, custom_entry_amount')`.
-- On each service card: if `service.custom_entry_amount` is non-null and `> 0`, render `<EntryBadge product={{ price_cents: 0, custom_entry_amount: service.custom_entry_amount }} />` wrapped in `<Suspense fallback={null}>`, placed beneath the service description and above the category badge.
-- No other changes to the marketplace page layout.
-- **See WARN-1 — requires the migration from R1 to be in place first.**
+1. **Hero** — Headline: "Build, Launch, and Grow — Join the Omni Incubator". One-sentence subheadline covering membership + e-books + sweepstakes. Two CTA buttons: "Browse the Library" → `/library`, "Join Now" → `/pricing`. Prize callout: if an active sweepstake exists, display "🎟️ Win {prize_description} — No purchase necessary"; if none, display "Enter our next sweepstake — coming soon" (static fallback text, no missing UI).
 
-### R3 — Admin Service Approval Workflow
+2. **Featured E-books** — Three most recently created active e-books (`type='ebook'`, `is_active=true`, `deleted_at IS NULL`, `ORDER BY created_at DESC`, `LIMIT 3`). Rendered using the existing `ProductCard` component (`src/components/library/product-card.tsx`). If fewer than 3 active e-books exist, render what is available without error.
 
-**R3.1 — Admin service edit form (`ServiceForm` in `src/components/admin/service-form.tsx`)**
+3. **How It Works** — Static three-step grid: "Join" → "Learn" → "Win", each with a short description. No data fetching.
 
-The `ServiceForm` component already has a `status` select (edit mode only) and an `is_coming_soon` checkbox. The following changes are needed:
-- **Status dropdown options**: replace current options (`pending`, `active`, `paused`) with: `pending`, `approved`, `active`, `suspended`. Note: the value `paused` does not appear in the DB schema — this is an existing bug. Correct values are `pending`, `approved`, `active`, `suspended`.
-- **Current status badge**: display a color-coded `<Badge>` alongside the status label showing the current value. Colors: `pending` → yellow/amber; `approved` → blue; `active` → green; `suspended` → red.
-- **`is_coming_soon` toggle**: already present and functional — no changes needed.
-- **`custom_entry_amount` field**: add an optional integer input for `custom_entry_amount`. Label: "Entry Amount (optional)". Client-side validation: if filled, must be ≥ 1. Send as `custom_entry_amount` in `FormData`. **See WARN-1.**
+4. **Membership Pitch** — Static value proposition card listing member benefits, "$15/mo or $129/yr" pricing, "Start free trial" CTA → `/pricing`.
 
-**R3.2 — `updateService` Server Action (`src/app/actions/services.ts`)**
+5. **Newsletter Callout** — Heading "Join our monthly newsletter", one-sentence description (newsletter is a membership benefit). CTA → `/pricing`. No standalone subscribe form. No Beehiiv API call on this page.
 
-The existing `updateService` already reads and updates `status` and `is_coming_soon`. Extend it to also read and update `custom_entry_amount`:
-- Extract `custom_entry_amount`: `const cea_str = formData.get('custom_entry_amount')?.toString()`. If empty string or absent, set `custom_entry_amount = null`. If present, parse as integer; if not a positive integer, return `{ error: 'Entry amount must be a positive integer' }`.
-- Include `custom_entry_amount` in the `adminClient.update({...})` call.
+**Data fetching (both using server-side Supabase client):**
+- Active sweepstake: `SELECT id, prize_description FROM sweepstakes WHERE status = 'active' LIMIT 1`.
+- Featured products: `SELECT id, slug, title, description, price_cents, cover_image_url, custom_entry_amount FROM products WHERE type='ebook' AND is_active=true AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 3`.
 
-Add a new export `approveService(id: string): Promise<{ ok: true } | { error: string }>`:
-1. Admin auth check (same pattern as existing actions).
-2. `adminClient.from('services').update({ status: 'approved' }).eq('id', id)`.
-3. `revalidatePath('/admin/services')`.
-4. Return `{ ok: true }` or `{ error: updateError.message }`.
+### R2 — SEO: generateMetadata on All Pages
 
-**R3.3 — Admin services list page (`/admin/services/page.tsx`)**
+Add `generateMetadata()` or `export const metadata` to every page currently missing it.
 
-- Add `searchParams: Promise<{ status?: string }>` to the page component.
-- Read `status` param. Apply filter to the Supabase query:
-  - If `status === 'pending'`: `.eq('status', 'pending').is('deleted_at', null)`
-  - If `status === 'active'`: `.eq('status', 'active').is('deleted_at', null)`
-  - Otherwise (all): `.is('deleted_at', null)` (show non-deleted only; already done via ServiceTable `deleted_at` check)
-- Render filter UI above the table: three buttons/links "All", "Pending approval", "Active" — each is an `<a>` or `<Link>` to `?status=pending`, `?status=active`, and base URL respectively. Highlight active filter.
-- Pass `services` (pre-filtered) to `<ServiceTable>`.
-- The `ServiceTable` component already renders status badges. Augment it to show an "Approve" button on rows with `status === 'pending'`.
+**Confirmed already present:**
+- Root layout (`src/app/layout.tsx`) — has `export const metadata` with title and description. **Must be upgraded** to include `title.template` and a fallback OG image (see below).
+- `src/app/free/[slug]/page.tsx` — has `generateMetadata` with OG image. Verified complete.
+- `src/app/marketplace/[slug]/page.tsx` — has `generateMetadata` with title and description, but **no OG image**. Must be completed.
 
-**R3.4 — `ServiceTable` component (`src/components/admin/service-table.tsx`)**
+**Missing — must be added:**
+- `/` — static `metadata`: site name, site description, canonical `https://omniincubator.org`, OG image (static `/og-banner.png`).
+- `/library` — `metadata`: title "E-book Library | Omni Incubator", description.
+- `/library/[slug]` — `generateMetadata`: product title, description, OG image (`cover_image_url`). Confirmed: zero metadata currently exists on this page (contrary to PRD assumption of Phase 2 completion).
+- `/pricing` — `metadata`: title "Membership Plans | Omni Incubator".
+- `/marketplace` — `metadata`: title "Service Marketplace | Omni Incubator".
+- `/marketplace/[slug]` — complete existing `generateMetadata` by adding `openGraph.images` (use static `/og-banner.png` as fallback since services have no cover image column).
+- `/sweepstakes` — `generateMetadata` (dynamic): query active sweepstake; title "Win {prize_description} | Omni Incubator Sweepstakes"; fallback "Enter Our Sweepstakes | Omni Incubator" if no active sweepstake.
+- `/sweepstakes/rules` — `metadata`: title "Official Sweepstakes Rules | Omni Incubator".
+- `/login` — `metadata`: title "Sign In | Omni Incubator".
+- `/profile` and all profile sub-pages — `metadata`: title "My Profile | Omni Incubator", `robots: { index: false }`.
+- `/admin/*` — all admin pages must emit `robots: { index: false, follow: false }`. Preferred: add `export const metadata` to `src/app/(admin)/layout.tsx` so it cascades automatically.
 
-- Add "Approve" button per pending row. This is a client component action — create a small `<ServiceApproveButton serviceId={id} />` client component that calls `approveService(id)` via `useTransition`, shows loading state, and calls `toast.success('Service approved')` on success.
-- The `ServiceTable` already uses client-side state for archive — the same pattern applies for approve.
-- No changes to status badge colors — current `<Badge variant="secondary">` for status is acceptable; the Architect may optionally add color variants consistent with the edit form badge.
+**Root layout upgrade (required):**
+```ts
+export const metadata: Metadata = {
+  title: {
+    default: 'Omni Incubator',
+    template: '%s | Omni Incubator',
+  },
+  description: 'E-books, community, sweepstakes — everything you need to build.',
+  openGraph: {
+    siteName: 'Omni Incubator',
+    images: [{ url: '/og-banner.png' }],
+  },
+}
+```
+The static OG banner (`public/og-banner.png`, 1200×630) must be created as a new asset. A minimal branded placeholder is sufficient for launch.
+
+### R3 — Sitemap and robots.txt
+
+Neither file currently exists. Both must be created.
+
+**`src/app/sitemap.ts`** — New file. Next.js `MetadataRoute.Sitemap` function.
+- Static URLs: `/`, `/library`, `/pricing`, `/marketplace`, `/sweepstakes`, `/sweepstakes/rules`, `/privacy`, `/terms`.
+- Dynamic e-book pages: query `products WHERE type='ebook' AND is_active=true AND deleted_at IS NULL`, map to `/library/{slug}`.
+- Dynamic sample product pages: query `sample_products WHERE is_active=true AND deleted_at IS NULL`, map to `/free/{slug}`.
+- Dynamic service pages: query `services WHERE status IN ('active','approved') AND deleted_at IS NULL`, map to `/marketplace/{slug}`.
+- Exclude all `/admin/*` and `/profile/*` URLs.
+
+**`src/app/robots.ts`** — New file. Next.js `MetadataRoute.Robots` function.
+- Allow all crawlers on all paths.
+- Disallow: `/admin/`, `/profile/`.
+- Sitemap URL: `https://omniincubator.org/sitemap.xml`.
+
+### R4 — Loading States
+
+No `loading.tsx` files currently exist anywhere in the codebase. All five must be created new.
+
+**New `loading.tsx` files required:**
+- `src/app/library/loading.tsx` — skeleton matching library layout: filter sidebar skeleton (`w-56 h-96`) + grid of 12 card skeletons.
+- `src/app/library/[slug]/loading.tsx` — skeleton matching ebook detail layout: cover image placeholder, title bar, price bar, body text lines.
+- `src/app/(admin)/admin/products/loading.tsx` — skeleton table: header row + 8 row skeletons.
+- `src/app/(admin)/admin/orders/loading.tsx` — skeleton table: header row + 8 row skeletons.
+- `src/app/(admin)/admin/users/loading.tsx` — skeleton table: header row + 8 row skeletons.
+
+**Button loading spinners:** All form submission and checkout trigger buttons must show `disabled + spinner` while async action is in flight. Use shadcn Button with `disabled` prop and Lucide `Loader2` icon with `animate-spin`. Audit scope:
+- Checkout buttons (e-book purchase, membership purchase, upsell).
+- Profile form submit.
+- Admin forms (product create/edit, sweepstake create).
+- Lead capture popup form submit.
+- Sweepstake entry form submit.
+
+### R5 — Error Handling Polish
+
+**`/not-found.tsx`** — Exists and passes: "404" heading, descriptive text, "Go home" link. No changes required.
+
+**`/error.tsx`** — Exists and passes Sentry capture + user message. Advisory: add a "Go home" link alongside the "Try again" button (see WARN-8).
+
+**`/403/page.tsx`** — Exists and passes: "403" heading, descriptive text, "Go home" link. No changes required.
+
+**Toast error handling on checkout:** All `fetch()` calls to checkout API routes must catch network errors and Stripe API errors and call `toast.error()` with a user-friendly message. The user must never be left on a broken page. Audit all checkout call sites across the codebase.
+
+### R6 — Mobile Responsiveness Audit
+
+**Library filter sidebar:** The `FilterSidebar` component (`src/components/library/filter-sidebar.tsx`) is a static `<aside>` with fixed `w-56`. The library page renders it with no mobile breakpoints. Required: on viewports ≤768px, hide the static sidebar (`hidden md:block`) and show a "Filters" button (`md:hidden`) that opens a shadcn `Sheet` containing the filter controls. The `FilterSidebar` logic can be reused inside the Sheet.
+
+**Admin sidebar:** `AdminSidebar` is a static `<aside>` with no responsive behavior (contrary to PRD claim of existing mobile Sheet from Phase 1). Must be made mobile-responsive: on viewports ≤768px, show a hamburger icon button that opens a shadcn `Sheet` containing the nav links. On desktop, render the existing static sidebar.
+
+**Product card grid:** Current library grid is `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4`. R6 requires 1 column on mobile. Change to `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4` (or equivalent). Apply consistently to the homepage featured e-books grid as well.
+
+**Navigation hamburger:** Verify existing Navbar hamburger menu functions correctly on all pages. This is a verification task, not new work.
+
+**Touch targets:** All interactive elements must be ≥44px height. Audit and fix violations.
+
+**Admin table `overflow-x-auto`:**
+- `admin/users/page.tsx` — already has `overflow-x-auto`. No change.
+- `admin/sweepstakes/page.tsx` — already has `overflow-x-auto`. No change.
+- `admin/orders/page.tsx` — MISSING. Add `overflow-x-auto` wrapper.
+- `admin/products/page.tsx` (via `ProductTable` component) — MISSING. Add `overflow-x-auto` to `ProductTable` component.
+- `admin/ebooks/page.tsx` — MISSING. Add `overflow-x-auto` wrapper.
+
+### R7 — Performance
+
+**`next/image` violations:** One confirmed raw `<img>` tag: `src/components/layout/navbar-auth.tsx` line 50 (user avatar). Must be replaced with `next/image`.
+
+**Width/height props:** Verify all `next/image` usages have explicit `width` and `height` props, or `fill` with a positioned parent. Wrap cover images in a container with an explicit aspect ratio class (e.g. `aspect-[3/4]`) to prevent CLS.
+
+**`priority` prop:** Add `priority` to:
+- Homepage hero image.
+- First 3–4 `ProductCard` instances on the library page (pass a `priority` prop to `ProductCard` and apply it conditionally).
+
+### R8 — RLS Policy Audit Script
+
+**`scripts/verify-rls.ts`** — New file (only `scripts/dashboard.py` currently exists).
+
+Requirements:
+- Reads `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` from environment variables.
+- Queries Postgres system tables (`pg_class`, `pg_namespace`, `pg_policies`) to determine RLS status and policy count per table.
+- Reports three categories: (1) OK — RLS on + ≥1 policy, (2) DANGER — RLS on + 0 policies (locked out), (3) WARNING — RLS off (open).
+- Minimum table list: `profiles`, `products`, `ebooks`, `user_ebooks`, `orders`, `subscriptions`, `sweepstakes`, `sweepstake_entries`, `services`, `sample_products`, `lead_submissions`.
+- Runnable via `npx tsx scripts/verify-rls.ts`. Verify `tsx` is in `devDependencies`; add if missing.
+
+**Runbook:** Create `docs/runbooks/runbook-rls-audit.md` documenting how to run the script and interpret output.
+
+### R9 — Privacy and Terms Pages
+
+Both pages exist as "Coming in Phase 6." placeholders. Replace with substantive placeholder content.
+
+**`/privacy`** — Cover: (1) data collected, (2) how used, (3) third-party services (Stripe, Supabase, Resend, Beehiiv, Rewardful named explicitly), (4) cookies and tracking, (5) contact. Each section body must include: `{PLACEHOLDER — EXTERNAL TASK E14: Have legal review this content}`.
+
+**`/terms`** — Cover: (1) acceptance of terms, (2) services description, (3) membership terms (trial, billing, cancellation, plan switching), (4) e-book license (personal, non-commercial, non-transferable), (5) refund policy, (6) limitation of liability. Each section body must include: `{PLACEHOLDER — EXTERNAL TASK E14}`.
+
+Both pages: server components, static (no data fetching), proper heading hierarchy (`h1` → `h2` → `h3`), consistent container/padding layout.
+
+### R10 — vercel.json Finalization
+
+Current `vercel.json` contains only `functions.maxDuration: 60` for the Stripe webhook. Preserve that and add:
+
+**Security headers** (`source: "/(.*)"` — all routes):
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `X-XSS-Protection: 1; mode=block`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+
+**Static asset caching** (`source: "/(_next/static|favicon\\.ico|.*\\.png|.*\\.jpg|.*\\.svg)"` or equivalent):
+- `Cache-Control: public, max-age=31536000, immutable`
+
+The `functions` block must be preserved unchanged.
+
+### R11 — Pre-launch Checklist Document
+
+**`docs/runbooks/pre-launch-checklist.md`** — New file. Does not currently exist (5 runbook files exist; none is a pre-launch checklist).
+
+Must be a Markdown file with `- [ ]` checkbox items grouped into 10 sections covering:
+1. Auth (OTP signup, Google OAuth signup, sign in, sign out)
+2. E-books (browse, filter, search, detail, preview)
+3. Checkout (non-member purchase, member purchase with 50% off, membership purchase, upsell flow)
+4. Webhooks (Stripe test events, verify processing)
+5. Downloads (download owned e-book, verify non-owner blocked)
+6. Profile (view, edit, orders, subscription, Stripe portal)
+7. Sweepstakes (popup entry, confirm email, profile entries display)
+8. Sample product (landing page, form submit, confirm email, download)
+9. Admin (create product, upload file, sweepstake lifecycle, user management)
+10. Emails (verify each transactional template sends)
 
 ---
 
 ## 3. Acceptance Criteria
 
-1. `GET /marketplace/[slug]` with `status='active'`, `deleted_at IS NULL` → HTTP 200, page renders with service content.
-2. `GET /marketplace/[slug]` with `status='approved'`, `deleted_at IS NULL` → HTTP 200, page renders.
-3. `GET /marketplace/[slug]` with `status='pending'` → HTTP 404.
-4. `GET /marketplace/[slug]` with `status='suspended'` → HTTP 404.
-5. `GET /marketplace/[slug]` with `deleted_at` set → HTTP 404.
-6. Service detail page: when `rate_label` is set → `rate_label` text displayed. When `rate_type='custom'` with no `rate_label` → "Contact for pricing" displayed. When `rate_type='hourly'`, `rate_cents=15000`, no `rate_label` → "$150/hr" displayed. When `rate_type='fixed'`, `rate_cents=250000`, no `rate_label` → "$2,500 fixed" displayed. When `rate_type='monthly'`, `rate_cents=50000`, no `rate_label` → "$500/mo" displayed.
-7. Service detail page renders `long_description` as Markdown inside `.prose` wrapper.
-8. Service detail page shows "By [display_name]" when `provider_id` is set; provider section absent when `provider_id` is null.
-9. Service detail page: `is_coming_soon=true` → Coming Soon overlay visible with CTA button.
-10. Clicking "Coming Soon — Join the waitlist" CTA on detail page → inline `<LeadCaptureForm source="marketplace_coming_soon" />` appears.
-11. Service detail page: `custom_entry_amount > 0` → `<EntryBadge>` renders.
-12. Marketplace service card: `custom_entry_amount > 0` → `<EntryBadge>` renders on card.
-13. Admin services list: status filter "Pending approval" → shows only `status='pending'` services. "Active" → shows only `status='active'`. "All" → shows all non-deleted.
-14. Admin services list: rows with `status='pending'` show "Approve" button.
-15. Clicking "Approve" button → `approveService` Server Action called, service status updated to `'approved'`, list revalidates.
-16. Admin service edit form status dropdown contains: `pending`, `approved`, `active`, `suspended`.
-17. Admin service edit form shows current-status color badge alongside status dropdown.
-18. Admin service edit form has `custom_entry_amount` field; saving with a value persists it to DB.
-19. `npx tsc --noEmit` → 0 errors.
-20. `npm run build` → exits 0.
+1. `GET /` renders all five homepage sections: hero, featured e-books, how it works, membership pitch, newsletter callout.
+2. Homepage hero displays prize callout with `prize_description` when an active sweepstake exists.
+3. Homepage hero displays fallback "Enter our next sweepstake" text when no active sweepstake exists.
+4. Featured e-books section renders ≤3 cards using the `ProductCard` component.
+5. All 12 pages listed in R2 have `generateMetadata()` or `metadata` export.
+6. Root layout `metadata.title` is an object with `default` and `template` keys.
+7. `src/app/sitemap.ts` exists and `GET /sitemap.xml` returns valid XML.
+8. Sitemap includes `/library/{slug}` entries for all active e-books.
+9. `src/app/robots.ts` exists and `GET /robots.txt` disallows `/admin/` and `/profile/`.
+10. `src/app/library/loading.tsx` exists and renders 12 card skeleton placeholders.
+11. `src/app/library/[slug]/loading.tsx` exists and renders a skeleton detail layout.
+12. `src/app/(admin)/admin/products/loading.tsx` exists and renders a skeleton table.
+13. `src/app/(admin)/admin/orders/loading.tsx` exists and renders a skeleton table.
+14. `src/app/(admin)/admin/users/loading.tsx` exists and renders a skeleton table.
+15. All form submission and checkout buttons show disabled + spinner state during async actions.
+16. `/not-found.tsx` renders 404 heading with homepage link. (Already passing.)
+17. `/error.tsx` captures to Sentry and renders user-friendly message. (Already passing.)
+18. `/403/page.tsx` renders 403 heading with homepage link. (Already passing.)
+19. Checkout API call failures surface a `toast.error()` message; user is not stranded.
+20. Library filter sidebar converts to a Sheet component on viewports ≤768px.
+21. Admin sidebar renders as a Sheet or hamburger pattern on viewports ≤768px.
+22. Product card grid renders 1 column on mobile (≤375px), 2 on tablet, 3–4 on desktop.
+23. `admin/orders`, `admin/products`, `admin/ebooks` tables have `overflow-x-auto` wrappers.
+24. No raw `<img>` tags exist (navbar-auth.tsx avatar converted to `next/image`).
+25. All `next/image` usages have explicit `width`/`height` or `fill` with positioned parent.
+26. Cover images have explicit aspect ratio wrappers to prevent CLS.
+27. `priority` prop is set on homepage hero image and library first-row product cards.
+28. `scripts/verify-rls.ts` exists and runs without crashing via `npx tsx scripts/verify-rls.ts`.
+29. `docs/runbooks/runbook-rls-audit.md` exists.
+30. `/privacy` renders substantive placeholder content with `{PLACEHOLDER — EXTERNAL TASK E14}` markers.
+31. `/terms` renders substantive placeholder content with `{PLACEHOLDER — EXTERNAL TASK E14}` markers.
+32. `vercel.json` contains security headers (`X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`).
+33. `vercel.json` retains `maxDuration: 60` for the Stripe webhook route.
+34. `docs/runbooks/pre-launch-checklist.md` exists with ≥10 grouped checklist sections.
+35. `npm run build` exits with code 0.
+36. `npx tsc --noEmit` exits with 0 errors.
+37. Vitest passes 7/7 (existing tests must not regress).
 
 ---
 
 ## 4. Cross-Phase Dependencies
 
-| Decision | Phase | Constraint |
-|---|---|---|
-| `services` table schema: `id, slug, title, description, long_description, rate_type (enum), rate_cents, rate_label, category, tags, status, is_coming_soon, provider_id, deleted_at` | Phase 1 | `custom_entry_amount` NOT present — WARN-1 requires new migration |
-| `service_rate_type` DB enum: `hourly, fixed, monthly, custom` | Phase 1 | ServiceForm options `project`/`retainer` are wrong — WARN-2 fix required |
-| `EntryBadge` async server component: `{ price_cents, custom_entry_amount }` props | Phase 4A | Must be wrapped in `<Suspense fallback={null}>` at each usage site |
-| `LeadCaptureForm` client component: supports `source='marketplace_coming_soon'` | Phase 4A | Already in type union — no changes to component |
-| `.prose` CSS utility in `globals.css` | Phase 4B | Available for Markdown rendering on detail page |
-| Admin auth in Server Actions: `createClient()` + profile role check | Phase 1 | `approveService` must follow same pattern as existing actions |
-| URL search param filter pattern: `searchParams: Promise<{ key?: string }>` | Phase 4B | Consistent with admin users page — same pattern for status filter |
-| `revalidatePath()` for admin list cache invalidation | Phase 2+ | Call `revalidatePath('/admin/services')` in `approveService` |
+- **Phase 1** — Auth, profiles table, RLS baseline, admin layout, `/not-found.tsx`, `/error.tsx`, `/403/page.tsx`, root layout, Navbar, Footer, Toaster (Sonner), Providers, `vercel.json` with `maxDuration: 60`. All must be preserved.
+- **Phase 2** — `ProductCard` component required by R1 homepage. `FilterSidebar` component required by R6 (mobile Sheet wrapping). Library ISR pattern (`revalidate = 60`) followed by R1.
+- **Phase 3** — Stripe checkout API routes exist. R5 requires toast error handling at all call sites. Stripe webhook `maxDuration: 60` in vercel.json must be preserved in R10.
+- **Phase 4A** — Sweepstakes schema with `prize_description` column on `sweepstakes` table. Used by R1 homepage prize callout and R2 sweepstakes metadata.
+- **Phase 4B** — `src/app/free/[slug]/page.tsx` `generateMetadata` confirmed complete. No additional work needed.
+- **Phase 5** — `src/app/marketplace/[slug]/page.tsx` `generateMetadata` exists but is incomplete (missing OG image). R2 must complete it.
 
 ---
 
 ## 5. Scope Boundaries
 
-**OUT of scope for Phase 5:**
-- Service booking, inquiry form, or any purchase/checkout flow for services.
-- Service provider registration or provider-facing portal.
-- Email notifications to providers or admins on status change.
-- Removing `is_coming_soon` from services site-wide — that is a future operational action, not a code change.
-- Homepage hero updates — Phase 6.
-- Full SEO pass (OG images, sitemap, robots.txt) — Phase 6.
-- Rating, review, or social proof on service cards.
-- Pagination on the public marketplace page.
-- Service search or category filtering on the public marketplace page.
-- Admin service create form changes (only edit form and list are in scope).
+The following are explicitly OUT OF SCOPE for Phase 6:
+
+- Actual Vercel deployment and DNS setup (EXTERNAL TASKs E11, E12)
+- Supabase production project creation (EXTERNAL TASK E1)
+- Google Cloud OAuth production client (EXTERNAL TASK E3)
+- Stripe live mode activation (EXTERNAL TASK E13)
+- Legal review of privacy, terms, sweepstakes rules (EXTERNAL TASK E14)
+- First sweepstake creation (EXTERNAL TASK E15)
+- First e-book and sample product upload (EXTERNAL TASKs E16, E17)
+- New database migrations — none required; all data fetching uses existing schema
+- Animated homepage hero or marketing video
+- A/B testing or analytics beyond existing Sentry integration
+- Lighthouse audit or Core Web Vitals optimization beyond next/image and priority prop
+- Dark mode audit
+- Internationalization or localization
+- New email templates
 
 ---
 
 ## 6. Findings
 
-### WARN-1: `services` table missing `custom_entry_amount` column
+### WARN-1: Admin Sidebar Mobile Implementation Does Not Exist
+**Severity:** WARN — new work required
+PRD R6 states "Admin sidebar: already uses Sheet for mobile from Phase 1 — verify." Code audit of `src/components/admin/admin-sidebar.tsx` shows a static `<aside className="w-64 min-h-screen border-r ...">` with zero responsive classes, no Sheet import, and no hamburger. This is entirely new work. Acceptance criterion 21 captures the requirement. The Architect must implement this, not just verify it.
 
-**Source:** `supabase/migrations/20240101000004_services.sql` — confirmed no `custom_entry_amount` column.
+### WARN-2: Library Page Mobile Grid is 2-Column on Mobile, Not 1-Column
+**Severity:** WARN — clarification/fix required
+R6 specifies "1 col on mobile, 2 on tablet, 3-4 on desktop." Current library grid class is `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4`, which renders 2 columns at 375px. The Architect must change this to achieve 1 column on mobile. The same standard should be applied to the homepage featured e-books grid when it is built.
 
-The PRD requires that services can show an entry badge when `custom_entry_amount > 0`. The `EntryBadge` component's `product` prop type is `{ price_cents: number; custom_entry_amount: number | null }`. Without this column, querying it will return `undefined`, TypeScript will error, and the feature cannot work.
+### WARN-3: `/library/[slug]` Has Zero Metadata (PRD Claim of Phase 2 Completion is Incorrect)
+**Severity:** WARN — work item
+PRD R2 states this page "already has metadata from Phase 2, verify it includes OG image." Code audit confirms zero `generateMetadata` or `metadata` exports in `src/app/library/[slug]/page.tsx`. This is new work. The Architect must add `generateMetadata()` including OG image using `cover_image_url`.
 
-**Required Architect action:** Add migration `supabase/migrations/20240101000019_services_custom_entry_amount.sql`:
-```sql
-ALTER TABLE public.services ADD COLUMN IF NOT EXISTS custom_entry_amount INTEGER;
-```
-Also add `custom_entry_amount` to:
-- Admin edit form (`ServiceForm`) — input field
-- `updateService` Server Action — read + write
-- Marketplace page query — select field
-- Marketplace `[slug]` page query — select field
+### WARN-4: `marketplace/[slug]` generateMetadata Missing OG Image
+**Severity:** WARN — minor completion required
+Existing `generateMetadata` returns only `title` and `description`. Services do not have a `cover_image_url` column in the current schema (Phase 5 data model). The Architect should use the static `/og-banner.png` as the OG image fallback for marketplace detail pages.
 
-This is a trivial additive migration with no risk to existing data.
+### WARN-5: Static OG Banner Asset Does Not Exist
+**Severity:** WARN — new asset required
+R2 requires a static OG banner image (`public/og-banner.png`, 1200×630px) for root layout metadata and marketplace fallback. No such file exists in `/public/`. The Architect must create or source this asset. A programmatically generated placeholder (e.g., a filled rectangle with site name as text) is acceptable for launch.
 
----
+### WARN-6: `tsx` Dev Dependency Status Unknown
+**Severity:** WARN — dependency check needed
+R8 specifies running `scripts/verify-rls.ts` via `npx tsx`. The Architect must verify `tsx` is in `devDependencies` in `package.json`. If absent, add it before declaring the script runnable.
 
-### WARN-2: `service_rate_type` enum mismatch with `ServiceForm` options
+### WARN-7: Admin Orders Page is Still a Placeholder
+**Severity:** WARN — scope clarification
+`src/app/(admin)/admin/orders/page.tsx` currently renders "Coming in a future phase." The R4 `loading.tsx` for orders and the R6 `overflow-x-auto` requirement both target this page. The `loading.tsx` should be created regardless (it will apply when the page gains real content). The `overflow-x-auto` wrapper should be added to the table wrapper, even if the table is placeholder content, to satisfy the acceptance criterion.
 
-**Source:** DB enum in `20240101000001_enums.sql` defines `service_rate_type AS ENUM ('hourly', 'fixed', 'monthly', 'custom')`. The `ServiceForm` select has options `hourly`, `project`, `retainer`, `custom` (lines ~146 of `service-form.tsx`). The values `project` and `retainer` do not exist in the enum.
+### WARN-8: `error.tsx` Missing Homepage Navigation Link
+**Severity:** WARN — minor UX advisory
+`/error.tsx` provides "Try again" but no way to navigate to the homepage if the error is unrecoverable. Adding a "Go home" link alongside the retry button is a trivial improvement. Advisory only.
 
-Any service with `rate_type='project'` or `rate_type='retainer'` will fail to insert or update with a Postgres type constraint error. This is a pre-existing Phase 2 bug.
+### INFO-1: Sweepstakes Metadata Column Name Clarification
+**Severity:** INFO
+PRD R2 uses `${prize_amount}` in the sweepstakes page metadata example. The actual schema column is `prize_description` (confirmed in BLUEPRINT and Phase 4A). The Architect must use `prize_description` in the dynamic title, not `prize_amount`.
 
-**Required Architect action:** Update `ServiceForm` select options to match the DB enum: `hourly`, `fixed`, `monthly`, `custom`. Also update:
-- `formatRate()` in `ServiceTable` — currently handles only `custom` explicitly; add case for `monthly` (e.g., `$X/mo`) and `fixed` (e.g., `$X fixed`).
-- Rate display on `/marketplace/[slug]` (R1 above already accounts for this correctly).
-
-No DB migration is needed — the enum values are correct in the DB. Only the UI options need correction.
-
----
-
-### INFO: Admin service edit form already has `status` and `is_coming_soon` fields
-
-`ServiceForm` already renders a `status` select (edit mode, lines ~213-230) and `is_coming_soon` checkbox. Phase 5 augments these — no rebuild required.
-
----
-
-### INFO: `updateService` action already handles `status` and `is_coming_soon`
-
-Lines 115-117 of `src/app/actions/services.ts` already read and pass `status` and `is_coming_soon` to the DB update. Only `custom_entry_amount` and the new `approveService` export need to be added.
+### INFO-2: All Acceptance Criteria Are Achievable
+**Severity:** INFO
+All 37 acceptance criteria can be met within the existing codebase architecture. No new external services, no new database migrations, no changes to auth strategy or data models are required. Phase 6 is a pure polish/frontend/documentation phase.
 
 ---
 
-### INFO: `ServiceTable` already shows status badges
-
-The existing `ServiceTable` renders `<Badge variant="secondary">{service.status ?? 'pending'}</Badge>` — AC-12 (status badge on each row) is already satisfied. Phase 5 only adds the filter UI and Approve button.
-
----
-
-*End of PRD_REPORT.md — Phase 5*
+*PRD Agent — Fortification complete. Status: WARN. Architect may proceed.*

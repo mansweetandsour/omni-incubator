@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
+import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -181,6 +182,7 @@ export function ProfileForm({ initialProfile, userEmail }: ProfileFormProps) {
       </div>
 
       <Button type="submit" disabled={saving}>
+        {saving && <Loader2 className="mr-2 size-4 animate-spin" />}
         {saving ? 'Saving...' : 'Save Profile'}
       </Button>
     </form>

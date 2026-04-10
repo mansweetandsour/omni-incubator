@@ -1,4 +1,10 @@
+import type { Metadata } from 'next'
 import Image from 'next/image'
+
+export const metadata: Metadata = {
+  title: 'My E-books',
+  robots: { index: false },
+}
 import { createClient } from '@/lib/supabase/server'
 import { adminClient } from '@/lib/supabase/admin'
 import { DownloadButton } from '@/components/billing/download-button'

@@ -20,8 +20,15 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Omni Incubator',
+  title: {
+    default: 'Omni Incubator',
+    template: '%s | Omni Incubator',
+  },
   description: 'E-books, community, sweepstakes — everything you need to build.',
+  openGraph: {
+    siteName: 'Omni Incubator',
+    images: [{ url: '/og-banner.png', width: 1200, height: 630 }],
+  },
 }
 
 export default function RootLayout({

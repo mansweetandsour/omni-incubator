@@ -42,7 +42,10 @@ export async function generateMetadata({ params }: ServiceDetailPageProps) {
   if (!service) return { title: 'Service Not Found' }
   return {
     title: service.title,
-    description: service.description ?? '',
+    description: service.description ?? undefined,
+    openGraph: {
+      images: [{ url: '/og-banner.png', width: 1200, height: 630 }],
+    },
   }
 }
 

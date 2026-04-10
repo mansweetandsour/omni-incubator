@@ -66,6 +66,7 @@ export function ProductTable({ products }: ProductTableProps) {
   }
 
   return (
+    <div className="overflow-x-auto">
     <Table>
       <TableHeader>
         <TableRow>
@@ -123,5 +124,6 @@ export function ProductTable({ products }: ProductTableProps) {
         })}
       </TableBody>
     </Table>
+    </div>
   )
 }

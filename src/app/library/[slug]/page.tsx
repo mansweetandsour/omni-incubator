@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
@@ -9,6 +10,28 @@ export const revalidate = 0
 
 interface EbookDetailPageProps {
   params: Promise<{ slug: string }>
+}
+
+export async function generateMetadata({ params }: EbookDetailPageProps): Promise<Metadata> {
+  const { slug } = await params
+  const supabase = await createClient()
+  const { data: product } = await supabase
+    .from('products')
+    .select('title, description, cover_image_url')
+    .eq('slug', slug)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .maybeSingle()
+  if (!product) return { title: 'E-book Not Found' }
+  return {
+    title: product.title,
+    description: product.description ?? undefined,
+    openGraph: {
+      images: product.cover_image_url
+        ? [{ url: product.cover_image_url }]
+        : [{ url: '/og-banner.png', width: 1200, height: 630 }],
+    },
+  }
 }
 
 export default async function EbookDetailPage({ params }: EbookDetailPageProps) {
