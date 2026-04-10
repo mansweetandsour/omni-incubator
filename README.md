@@ -105,6 +105,19 @@ Authentication (Email OTP + Google OAuth), Supabase setup, middleware, profile m
 - **Signed download API** (`GET /api/ebooks/[id]/download`) — ownership check, 1-hour Supabase Storage signed URL, atomic download count increment via `increment_download_count` RPC, 307 redirect.
 - **Billing portal** (`POST /api/subscription/portal`) — creates Stripe Billing Portal session for subscription self-management.
 
+### Phase 4B — Sample Products & Admin Tools
+- **Sample product admin CRUD** (`/admin/sample-products`) — create, edit, toggle active. Server Actions (`src/app/actions/sample-products.ts`). File upload API (`POST /api/admin/sample-products/[id]/upload`) handles PDFs → `sample-products` bucket and covers → `covers` bucket.
+- **Sample product landing page** (`/free/[slug]`) — ISR 60s; 404 for inactive/unknown slugs; lead capture form with optional phone field; entry callout when a sweepstake is active. Confirmation redirect to `/free/[slug]/download?token=`.
+- **Sample product download page** (`/free/[slug]/download`) — server-side token validation with redirect for unconfirmed/missing/mismatched tokens. Upsell section for linked products and membership.
+- **Sample product download API** (`GET /api/sample-products/[slug]/download`) — token-based public download: validates token, confirmed_at, product match; 307 redirect to 1-hour Supabase Storage signed URL.
+- **Admin user management** (`/admin/users`, `/admin/users/[id]`) — search by email/name/phone/order number; user detail shows profile, subscription, orders, e-books, entry breakdown, and entry history. Entry adjustment form (`adjustUserEntries` Server Action) creates `sweepstake_entries` with `source='admin_adjustment'`; non-zero entries and non-empty notes enforced.
+- **CSV export** (`GET /api/admin/sweepstakes/[id]/export`) — admin only; refreshes `entry_verification` materialized view via `refresh_entry_verification` RPC before querying; calls `export_sweepstake_entries(sweepstake_id)` SECURITY DEFINER RPC (migration 000018); returns 10-column CSV attachment (see ADR-011).
+- **Public sweepstakes page** (`/sweepstakes`) — ISR 60s; hero with prize amount and `<CountdownTimer>`; "Ways to enter" lists active sample products; coming-soon fallback when no active sweepstake.
+- **Official rules page** (`/sweepstakes/rules`) — static; 9 legal sections with placeholder pending legal review (E14).
+- **Profile entries page** (`/profile/entries`) — force-dynamic; shows `total_entries` and source breakdown (purchase, non-purchase, admin, coupon bonus) from `entry_verification`; "no active sweepstake" state.
+- **Admin dashboard** (`/admin`) — replaced redirect stub; stat cards for active members, revenue this month, active sweepstake summary, and lead capture totals; amber warning banner when no active sweepstake; recent orders table.
+- **`CountdownTimer` component** (`src/components/sweepstakes/CountdownTimer.tsx`) — client component; null-initialized state to avoid hydration mismatch; renders "Sweepstake ended" when past the end date.
+
 ### Phase 4A — Sweepstakes Core
 - **Entry engine** (`src/lib/sweepstakes.ts`) — pure functions (`calculateEntries`, `computeLeadCaptureEntries`) and DB writers (`awardPurchaseEntries`, `awardLeadCaptureEntries`). Entry calculation is separated from DB writes for testability (see ADR-009).
 - **Lead capture API** (`POST /api/lead-capture`) — creates a `lead_captures` row with `confirmed_at=NULL`; sends a confirmation email via Resend. Rate-limited 5/IP/hr via Upstash (skipped gracefully when not configured). Entries are not awarded until email is confirmed (see ADR-010).
@@ -129,30 +142,37 @@ omni-incubator/
 │   │   │   └── admin/
 │   │   │       ├── products/       # CRUD pages for e-book products
 │   │   │       ├── services/       # CRUD pages for services
-│   │   │       ├── sweepstakes/    # Sweepstakes list, create/edit, multipliers management
+│   │   │       ├── sweepstakes/    # Sweepstakes list, create/edit, multipliers management, CSV export
 │   │   │       ├── coupons/        # Coupon list, create/edit
-│   │   │       └── [others]/       # Placeholder pages (ebooks, orders, users, etc.)
+│   │   │       ├── sample-products/ # Sample product list, create/edit, file uploads
+│   │   │       ├── users/          # User search + detail with entry adjustment
+│   │   │       └── [others]/       # Placeholder pages (ebooks, orders)
 │   │   ├── actions/
 │   │   │   ├── products.ts         # Server Actions: createProduct, updateProduct, archiveProduct
-│   │   │   └── services.ts         # Server Actions: createService, updateService, archiveService
+│   │   │   ├── services.ts         # Server Actions: createService, updateService, archiveService
+│   │   │   ├── sample-products.ts  # Server Actions: createSampleProduct, updateSampleProduct, toggleSampleProductActive
+│   │   │   └── admin-users.ts      # Server Action: adjustUserEntries
 │   │   ├── api/
-│   │   │   ├── admin/ebooks/[id]/upload/route.ts        # Multipart file upload (admin only)
-│   │   │   ├── ebooks/[id]/preview/route.ts             # Public preview PDF redirect
-│   │   │   ├── ebooks/[id]/download/route.ts            # Ownership check + signed URL + 307 redirect
-│   │   │   ├── library/products/route.ts                # Paginated library listing
-│   │   │   ├── auth/callback/route.ts                   # Google OAuth PKCE callback
-│   │   │   ├── checkout/membership/route.ts             # Subscription checkout session
-│   │   │   ├── checkout/ebook/route.ts                  # Ebook payment checkout session
-│   │   │   ├── checkout/ebook-with-membership/route.ts  # Combined checkout session
-│   │   │   ├── coupons/validate/route.ts                # Coupon validation
-│   │   │   ├── webhooks/stripe/route.ts                 # Stripe webhook handler (idempotent)
-│   │   │   ├── lead-capture/route.ts                    # Lead capture submit + confirmation email
-│   │   │   ├── lead-capture/confirm/route.ts            # Token validation + entry awarding
-│   │   │   ├── lead-capture/resend/route.ts             # Resend confirmation email (5-min cooldown)
-│   │   │   ├── profile/orders/route.ts                  # Paginated order history
-│   │   │   ├── profile/ebooks/route.ts                  # Owned ebook list
-│   │   │   ├── profile/subscription/route.ts            # Subscription status
-│   │   │   └── subscription/portal/route.ts             # Stripe Billing Portal session
+│   │   │   ├── admin/ebooks/[id]/upload/route.ts                # Multipart file upload (admin only)
+│   │   │   ├── admin/sample-products/[id]/upload/route.ts      # Sample product PDF + cover upload (admin only)
+│   │   │   ├── admin/sweepstakes/[id]/export/route.ts          # CSV export via SECURITY DEFINER RPC (admin only)
+│   │   │   ├── ebooks/[id]/preview/route.ts                    # Public preview PDF redirect
+│   │   │   ├── ebooks/[id]/download/route.ts                   # Ownership check + signed URL + 307 redirect
+│   │   │   ├── sample-products/[slug]/download/route.ts        # Token-based download + 307 redirect (public)
+│   │   │   ├── library/products/route.ts                       # Paginated library listing
+│   │   │   ├── auth/callback/route.ts                          # Google OAuth PKCE callback
+│   │   │   ├── checkout/membership/route.ts                    # Subscription checkout session
+│   │   │   ├── checkout/ebook/route.ts                         # Ebook payment checkout session
+│   │   │   ├── checkout/ebook-with-membership/route.ts         # Combined checkout session
+│   │   │   ├── coupons/validate/route.ts                       # Coupon validation
+│   │   │   ├── webhooks/stripe/route.ts                        # Stripe webhook handler (idempotent)
+│   │   │   ├── lead-capture/route.ts                           # Lead capture submit + confirmation email
+│   │   │   ├── lead-capture/confirm/route.ts                   # Token validation + entry awarding
+│   │   │   ├── lead-capture/resend/route.ts                    # Resend confirmation email (5-min cooldown)
+│   │   │   ├── profile/orders/route.ts                         # Paginated order history
+│   │   │   ├── profile/ebooks/route.ts                         # Owned ebook list
+│   │   │   ├── profile/subscription/route.ts                   # Subscription status
+│   │   │   └── subscription/portal/route.ts                    # Stripe Billing Portal session
 │   │   ├── layout.tsx              # Root layout — navbar, footer, providers
 │   │   ├── page.tsx                # Homepage (placeholder, Phase 6 content)
 │   │   ├── globals.css             # Tailwind directives + shadcn/ui CSS variables
@@ -170,13 +190,18 @@ omni-incubator/
 │   │   ├── pricing/page.tsx        # Membership pricing page with toggle
 │   │   ├── ebooks/download/[id]/page.tsx   # Download page (auth-protected)
 │   │   ├── confirm/[token]/page.tsx        # Email confirmation — 5 states
-│   │   ├── sweepstakes/page.tsx    # Placeholder (Phase 5)
+│   │   ├── free/[slug]/page.tsx            # Sample product landing + lead capture (ISR 60s)
+│   │   ├── free/[slug]/download/page.tsx   # Token-validated download page (force-dynamic)
+│   │   ├── sweepstakes/page.tsx    # Public sweepstakes page — hero, countdown, entry methods (ISR 60s)
+│   │   ├── sweepstakes/rules/page.tsx      # Official rules (static)
+│   │   ├── profile/entries/page.tsx        # Entry stats + history (force-dynamic)
 │   │   ├── privacy/page.tsx        # Placeholder (Phase 6)
 │   │   └── terms/page.tsx          # Placeholder (Phase 6)
 │   ├── components/
 │   │   ├── admin/                  # Admin-specific components (sidebar, forms, tables)
 │   │   ├── billing/                # Billing components (checkout button, download button, pricing cards, order history, subscription management)
-│   │   ├── sweepstakes/            # EntryBadge, MultiplierBanner, LeadCapturePopup, LeadCapturePopupWrapper
+│   │   ├── sweepstakes/            # EntryBadge, MultiplierBanner, LeadCapturePopup, LeadCapturePopupWrapper, CountdownTimer
+│   │   ├── free/                   # LeadCaptureFormFree (sample product lead capture form)
 │   │   ├── library/                # Library page components (card, filters, search, sort, load-more)
 │   │   ├── ebook/                  # E-book detail components (detail view, preview button, checkout integration)
 │   │   ├── auth/
@@ -208,7 +233,7 @@ omni-incubator/
 │   │   └── utils.ts                # cn() Tailwind class merge utility
 │   └── middleware.ts               # Session refresh + route protection (includes /ebooks/download)
 ├── supabase/
-│   ├── migrations/                 # 17 timestamped SQL migration files
+│   ├── migrations/                 # 18 timestamped SQL migration files
 │   ├── storage.md                  # Storage bucket configuration guide
 │   └── auth-config.md              # Auth configuration guide
 ├── vercel.json                     # maxDuration: 60 for /api/webhooks/stripe
@@ -244,6 +269,7 @@ All required variables are documented in `.env.local.example` with inline commen
 - [ADR-008: Stripe v22 API adaptation](docs/adr/ADR-008-stripe-v22-adaptation.md)
 - [ADR-009: Pure function design for calculateEntries](docs/adr/ADR-009-pure-function-entry-calculation.md)
 - [ADR-010: Lead capture email confirmation flow](docs/adr/ADR-010-lead-capture-email-confirmation.md)
+- [ADR-011: Materialized view export via SECURITY DEFINER RPC](docs/adr/ADR-011-export-rpc-security-definer.md)
 - [API Reference](docs/api-reference.md)
 - [Stripe webhook setup runbook](docs/runbooks/stripe-webhook-setup.md)
 - [Sweepstakes operations runbook](docs/runbooks/sweepstakes-operations.md)

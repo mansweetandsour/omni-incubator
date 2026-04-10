@@ -14,6 +14,67 @@ Google OAuth PKCE callback. Exchanges the authorization code for a session and r
 
 ## Admin — File Upload
 
+### `POST /api/admin/sample-products/[id]/upload`
+
+**Auth:** Admin only (cookie session + `profiles.role = 'admin'`). Returns 401 if unauthenticated, 403 if not admin.
+
+Upload a PDF or cover image for a sample product. Accepts `multipart/form-data`.
+
+**Form fields:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | File | Yes | The file to upload |
+| `type` | string | Yes | `pdf` \| `cover` |
+
+**Behavior by type:**
+
+| `type` | Destination bucket | Max size | Accepted MIME | DB field updated |
+|---|---|---|---|---|
+| `pdf` | `sample-products` (private) | 100 MB | `application/pdf` | `sample_products.file_path` |
+| `cover` | `covers` (public) | 20 MB | `image/jpeg`, `image/png`, `image/webp` | `sample_products.cover_image_url` |
+
+**Response (200):**
+```json
+{ "path": "covers/sample-products/id/cover-filename.jpg", "url": "https://..." }
+```
+(`url` is present for `cover` type; absent for `pdf` uploads.)
+
+**Error responses:** `400` (missing field, wrong type), `401`, `403`, `413` (file over size limit), `415` (wrong MIME), `500`.
+
+---
+
+### `GET /api/admin/sweepstakes/[id]/export`
+
+**Auth:** Admin only (cookie session + `profiles.role = 'admin'`). Returns 401 if unauthenticated, 403 if not admin.
+
+Export all sweepstake entries as a CSV file. Before querying, this route calls the `refresh_entry_verification` RPC to ensure the materialized view is current. Data is returned via the `export_sweepstake_entries` SECURITY DEFINER RPC (see ADR-011).
+
+- `[id]` is the `sweepstakes.id` (UUID).
+
+**Response (200):** `text/csv` with `Content-Disposition: attachment; filename="sweepstake-{id}-entries.csv"`.
+
+**CSV columns:**
+
+| Column | Description |
+|---|---|
+| `user_email` | Participant email from `profiles` |
+| `display_name` | Display name from `profiles` |
+| `total_entries` | Total entries across all sources |
+| `purchase_entries` | Entries from e-book purchases and memberships |
+| `non_purchase_entries` | Entries from confirmed lead captures |
+| `admin_entries` | Entries from admin adjustments |
+| `coupon_bonus_entries` | Entries from coupon bonuses |
+| `list_price_basis_cents` | List price used for entry calculation (cents) |
+| `amount_collected_cents` | Actual amount collected (cents) |
+| `actual_order_total_cents` | Order total (cents) |
+
+Rows are ordered by `total_entries DESC`.
+
+**Error responses:** `401`, `403`, `500`.
+
+---
+
 ### `POST /api/admin/ebooks/[id]/upload`
 
 **Auth:** Admin only (cookie session + `profiles.role = 'admin'`). Returns 401 if unauthenticated, 403 if not admin.
@@ -250,6 +311,35 @@ Current subscription for the authenticated user, or `null` if no subscription ex
 ```json
 null
 ```
+
+---
+
+## Sample Products — Public
+
+### `GET /api/sample-products/[slug]/download`
+
+**Auth:** None (public). Requires a `?token=` query parameter.
+
+Token-based download for sample product PDFs. The token is the `lead_captures.confirmation_token` UUID from the confirmation email link. The token must belong to a confirmed lead capture (`confirmed_at IS NOT NULL`) that matches the sample product identified by `[slug]`.
+
+**Query parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `token` | string (UUID) | Yes | Confirmation token from the email link or download page URL |
+
+**Response:** `307` redirect to a 1-hour Supabase Storage signed URL.
+
+**Error responses:**
+
+| Status | Condition |
+|---|---|
+| `400` | `token` query parameter missing |
+| `403` | Token found but `confirmed_at IS NULL` (not confirmed) |
+| `403` | Token belongs to a different sample product (`token/product mismatch`) |
+| `404` | Token not found in `lead_captures` |
+| `404` | Sample product not found for the given slug |
+| `500` | Storage signed URL generation failed |
 
 ---
 

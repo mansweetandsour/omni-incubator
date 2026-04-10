@@ -1,14 +1,14 @@
-# DEPLOY_DONE.md — Phase 4A: Sweepstakes Core
+# DEPLOY_DONE.md — Phase 4B: Sample Products & Admin Tools
 
 **Result: APPROVED**
 **Date:** 2026-04-09
-**Phase:** 4A — Sweepstakes Core
+**Phase:** 4B — Sample Products & Admin Tools
 
 ---
 
 ## Summary
 
-Phase 4A is build-clean and infra-ready. QA confirmed 52 routes compile cleanly, 7/7 Vitest tests pass, and `tsc --noEmit` produces 0 errors. Both Upstash environment variables are present in `.env.local.example`. Vitest is correctly in `devDependencies`, not `dependencies`. No hardcoded secrets found in any new or modified Phase 4A file. One new migration file exists and must be applied before deployment. E15 (create first sweepstake) and E19 (Upstash Redis) are needed before launch.
+Phase 4B is build-clean and infra-ready. QA confirmed 63 routes compile cleanly, 7/7 Vitest tests pass, and `tsc --noEmit` produces 0 errors. Migration `20240101000018` exists and is the only new migration. No new environment variables were introduced — all Phase 4B routes use existing Supabase client wrappers. The `sample-products` storage bucket is documented in `supabase/storage.md` (present since Phase 1). No hardcoded secrets found in any new Phase 4B file. E16 (upload first e-books) and E17 (create first sample product) are needed before launch.
 
 ---
 
@@ -18,80 +18,88 @@ Phase 4A is build-clean and infra-ready. QA confirmed 52 routes compile cleanly,
 
 **PASS — Confirmed by QA**
 
-QA Agent (re-validation run) confirmed:
+QA Agent confirmed:
 
 ```
 npm run build
-→ 52 routes compiled
+→ 63 routes compiled successfully in 6.2s
 → TypeScript: 0 errors
-→ Next.js build: PASS
-
-npx vitest run
-→ 7/7 tests pass
+→ Next.js build: PASS (0 errors)
 
 node node_modules/typescript/bin/tsc --noEmit
 → 0 errors
+
+node node_modules/vitest/vitest.mjs run
+→ 7/7 tests passed (no regressions from Phase 4A)
 ```
 
-No re-run required.
+All Phase 4B routes confirmed compiled:
+- `/free/[slug]`, `/free/[slug]/download`
+- `/api/sample-products/[slug]/download`
+- `/api/admin/sweepstakes/[id]/export`
+- `/admin/users`, `/admin/users/[id]`
+- `/profile/entries`
+- `/sweepstakes`, `/sweepstakes/rules`
 
 ---
 
-### Task 2 — `.env.local.example` Upstash Coverage
+### Task 2 — Migration 20240101000018 Exists
 
 **PASS**
 
-`.env.local.example` lines 27–28:
-
+File confirmed present:
 ```
-UPSTASH_REDIS_REST_URL=                    # Upstash Redis REST URL for rate limiting lead capture endpoint
-UPSTASH_REDIS_REST_TOKEN=                  # Upstash Redis REST token (server only)
+supabase/migrations/20240101000018_export_sweepstake_entries_fn.sql
 ```
 
-Both variables are present with descriptive inline comments. The values are intentionally empty (local default = rate limiting skipped). The lead capture endpoints function without these variables; rate limiting is simply not applied.
+Contents: `CREATE OR REPLACE FUNCTION public.export_sweepstake_entries(p_sweepstake_id UUID)` — SECURITY DEFINER function that joins `entry_verification` materialized view with `profiles`. Returns 10 columns ordered by `total_entries DESC`.
+
+**Migration must be applied before deployment:**
+```bash
+supabase db push
+# Verify:
+SELECT routine_name FROM information_schema.routines
+WHERE routine_name = 'export_sweepstake_entries';
+```
+
+This is the only new migration in Phase 4B. All 18 migrations must be applied in order.
 
 ---
 
-### Task 3 — Vitest in devDependencies
+### Task 3 — No New Environment Variables Without .env.local.example Entries
 
-**PASS**
+**PASS — No new env vars introduced**
 
-`package.json` `devDependencies`:
-```json
-"vitest": "^2.1.9",
-"@vitest/coverage-v8": "^2.1.9"
-```
+All Phase 4B files were scanned for `process.env.` references:
 
-`package.json` `dependencies`: no `vitest` entry.
+| File | process.env references |
+|---|---|
+| `src/app/api/admin/sweepstakes/[id]/export/route.ts` | None — uses `createClient()` and `adminClient` from `src/lib/supabase/` wrappers |
+| `src/app/api/admin/sample-products/[id]/upload/route.ts` | None — uses `createClient()` and `adminClient` |
+| `src/app/api/sample-products/[slug]/download/route.ts` | None — uses `adminClient` |
+| `src/app/actions/sample-products.ts` | None |
+| `src/app/actions/admin-users.ts` | None |
+| All new frontend pages and components | None |
 
-Vitest is a test-only tool and correctly placed in `devDependencies`. It is excluded from the production bundle. `npm run build` does not include Vitest in the output. Scripts:
-```json
-"test": "vitest run",
-"test:watch": "vitest"
-```
+All environment variables consumed by Phase 4B are already present in `.env.local.example` and were introduced in earlier phases (Supabase URL, anon key, service role key). No `.env.local.example` changes required.
 
 ---
 
-### Task 4 — E19 Upstash Redis Status
+### Task 4 — sample-products Bucket Documented
 
-**NOTED**
+**PASS — Present since Phase 1**
 
-Upstash Redis is used in `src/app/api/lead-capture/route.ts` and `src/app/api/lead-capture/resend/route.ts` for IP-based rate limiting. The guard at the top of each route:
+`supabase/storage.md` contains the `sample-products` bucket entry:
 
-```typescript
-if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
-  // skip rate limiting — proceed without it
-}
+```
+| sample-products  | Private | Yes (1hr expiry)   | Free lead magnet downloads          |
 ```
 
-**Without Upstash configured:**
-- `/api/lead-capture` — no IP-based rate limiting (5/IP/hr); endpoint remains fully functional
-- `/api/lead-capture/resend` — Upstash 1/5min per-email rate limit skipped; the DB-level guard (queries `confirmation_sent_at`) still enforces a 5-minute cooldown as a fallback
-- No errors or 500s; graceful degradation
+File path convention is documented: `sample-products/{sample-product-uuid}/{filename}.pdf`
 
-**E19 is needed before launch.** Without it, a single IP can flood the lead capture endpoint. The DB-level resend cooldown provides partial protection but does not defend the initial submit path.
+The bucket is private and must be accessed via signed URLs (1-hour expiry). This is correctly implemented in `src/app/api/sample-products/[slug]/download/route.ts` via `adminClient.storage.from('sample-products').createSignedUrl(product.file_path, 3600)`.
 
-See `docs/runbooks/runbook-external-tasks.md` § E19 for setup instructions.
+No changes to `supabase/storage.md` required.
 
 ---
 
@@ -99,42 +107,33 @@ See `docs/runbooks/runbook-external-tasks.md` § E19 for setup instructions.
 
 **PASS — No hardcoded secrets found**
 
-Scanned all new and modified Phase 4A files for hardcoded credential patterns:
+Scanned all new and modified Phase 4B files for hardcoded credential patterns:
 - Stripe key prefixes: `sk_live_`, `sk_test_`, `pk_live_`, `pk_test_`, `whsec_`
-- Upstash patterns: `redis://`, fixed bearer token strings
-- Resend key prefix: `re_`
-- JWT/base64 credential patterns: `eyJ`
+- Resend key prefix: `re_` (20+ char)
+- Supabase JWT / bearer token patterns: `eyJ` (40+ chars)
+- Upstash token patterns
 
 **New files audited:**
-- `src/lib/sweepstakes.ts`
-- `src/lib/__tests__/sweepstakes.test.ts`
-- `vitest.config.ts`
-- `src/app/api/lead-capture/route.ts`
-- `src/app/api/lead-capture/confirm/route.ts`
-- `src/app/api/lead-capture/resend/route.ts`
-- `src/emails/lead-capture-confirm.tsx`
-- `src/emails/sample-product-confirm.tsx`
-- `src/app/(admin)/admin/sweepstakes/actions.ts`
-- `src/app/actions/sweepstakes.ts`
-- All new admin pages and components under `src/app/(admin)/admin/sweepstakes/` and `src/app/(admin)/admin/coupons/`
-- `src/components/sweepstakes/` (all 4 files)
-- `src/app/confirm/[token]/page.tsx`
-- `supabase/migrations/20240101000017_refresh_entry_verification_fn.sql`
+- `supabase/migrations/20240101000018_export_sweepstake_entries_fn.sql`
+- `src/app/actions/sample-products.ts`
+- `src/app/actions/admin-users.ts`
+- `src/app/api/admin/sample-products/[id]/upload/route.ts`
+- `src/app/api/sample-products/[slug]/download/route.ts`
+- `src/app/api/admin/sweepstakes/[id]/export/route.ts`
+- `src/components/sweepstakes/CountdownTimer.tsx`
+- `src/components/admin/sample-product-form.tsx`
+- `src/components/admin/sample-product-file-upload.tsx`
+- `src/components/admin/user-entry-adjustment-form.tsx`
+- `src/components/free/LeadCaptureFormFree.tsx`
+- All new admin and public pages under `src/app/(admin)/admin/` and `src/app/free/`, `src/app/sweepstakes/`, `src/app/profile/entries/`
 
-**Result: 0 matches.** All environment variables accessed exclusively via `process.env.*`.
+**Result: 0 matches.** All credential access is exclusively via environment variables read through `process.env.*` inside `src/lib/supabase/*.ts` client wrappers.
 
 ---
 
-## New Environment Variables (Phase 4A)
+## New Environment Variables (Phase 4B)
 
-| Variable | Required | Guard behavior | Source |
-|---|---|---|---|
-| `UPSTASH_REDIS_REST_URL` | No — needed before launch | Absent → rate limiting skipped | Upstash Console → database → REST URL |
-| `UPSTASH_REDIS_REST_TOKEN` | No — needed before launch | Absent → rate limiting skipped | Upstash Console → database → REST token |
-
-Both variables were pre-added to `.env.local.example` in Phase 3 anticipation. No `.env.local.example` change required.
-
-Add both to Vercel Dashboard → Settings → Environment Variables before launch.
+None. No new environment variables were introduced.
 
 ---
 
@@ -142,17 +141,9 @@ Add both to Vercel Dashboard → Settings → Environment Variables before launc
 
 | Resource | Type | Change |
 |---|---|---|
-| `supabase/migrations/20240101000017_refresh_entry_verification_fn.sql` | Postgres function | New — `public.refresh_entry_verification()` SECURITY DEFINER wrapper for `REFRESH MATERIALIZED VIEW CONCURRENTLY` |
-| `vitest.config.ts` | Dev tooling config | New — Vitest config with `@` path alias and `node` environment |
+| `supabase/migrations/20240101000018_export_sweepstake_entries_fn.sql` | Postgres function | New — `public.export_sweepstake_entries(p_sweepstake_id UUID)` SECURITY DEFINER function for CSV export |
 
-No new Vercel config changes. No new Supabase Storage buckets. No new cloud services beyond Upstash (external, configured by E19). No Docker/compose changes required.
-
-**Migration must be applied before deployment:**
-```bash
-supabase db push
-# Verify:
-# SELECT routine_name FROM information_schema.routines WHERE routine_name = 'refresh_entry_verification';
-```
+No new Vercel config changes. No new Supabase Storage buckets (sample-products was created in Phase 1). No new cloud services. No Docker/compose changes required.
 
 ---
 
@@ -167,7 +158,7 @@ supabase db push
 
 ## CI/CD Pipeline
 
-No changes. Deployment is via Vercel git integration (push to `main` triggers build + deploy). Vitest is not run in CI yet — no GitHub Actions workflow exists. Consider adding a CI step in Phase 6 pre-launch hardening.
+No changes. Deployment is via Vercel git integration (push to `main` triggers build + deploy). No GitHub Actions workflow exists. Build confirmed clean by QA (6.2s compile, 0 errors).
 
 ---
 
@@ -178,19 +169,19 @@ No changes. Deployment is via Vercel git integration (push to `main` triggers bu
 3. Click three-dot menu → **Promote to Production**
 4. Traffic is instantly re-routed — no rebuild required
 
-**Database rollback note:** Phase 4A includes 1 new migration. Rolling back application code while leaving the migration applied is safe — `refresh_entry_verification` is additive and not called by Phase 3 code. If a full DB rollback is needed:
+**Database rollback note:** Phase 4B includes 1 new migration. Rolling back application code while leaving the migration applied is safe — `export_sweepstake_entries` is additive and called only by the admin export route. If a full DB rollback is needed:
 ```sql
-DROP FUNCTION IF EXISTS public.refresh_entry_verification();
+DROP FUNCTION IF EXISTS public.export_sweepstake_entries(UUID);
 ```
-Only do this if application code is also being rolled back.
+Only execute this if application code is also being rolled back.
 
 ---
 
-## External Tasks Needed Before Launch (Phase 4A additions)
+## External Tasks Needed Before Launch (Phase 4B additions)
 
 | Task | Description | Consequence if missing |
 |---|---|---|
-| **E15** | Create first sweepstake in admin dashboard and activate it | Entry badges do not appear; lead capture popup does not appear; no entries are awarded for any purchase or lead capture |
-| **E19** | Create Upstash Redis database, add REST URL + token to environment | Lead capture submit endpoint has no IP-based rate limiting; resend endpoint DB cooldown still applies |
+| **E16** | Upload first e-books via `/admin/products` | Library is empty; `/library` shows no products; purchase entry awarding has nothing to attach to |
+| **E17** | Create first sample product via `/admin/sample-products` | No `/free/[slug]` landing pages exist; `/sweepstakes` "Ways to enter" section lists no free resources; sample-product lead capture flow unavailable |
 
-Existing external tasks from Phase 3 (E4, E6, E9/E18, E8) remain required. See `docs/runbooks/runbook-external-tasks.md` for the full checklist.
+All prior external tasks (E4, E6, E8, E9/E18, E14, E15, E19) remain required. See `docs/runbooks/runbook-external-tasks.md` for the full checklist.

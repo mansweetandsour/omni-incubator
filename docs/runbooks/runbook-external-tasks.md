@@ -267,20 +267,33 @@ See the [Sweepstakes Operations runbook](sweepstakes-operations.md) for step-by-
 ---
 
 ### E16 — Upload first e-books via admin dashboard
-**Blocking:** Yes for non-empty library
+**Blocking:** Yes — **needed before launch** (the library page is empty without at least one active e-book; entry badges and purchase entry awarding will not have products to attach to)
+
+1. Navigate to `/admin/products` → New Product.
+2. Fill in title, slug, description, pricing, and category.
+3. On the edit page, upload a cover image and the main PDF (and optionally a preview PDF).
+4. Toggle the product to active.
 
 - [ ] At least one e-book uploaded with title, cover, price, and PDF
+- [ ] Product marked active so it appears in `/library`
 
 ---
 
 ### E17 — Create first sample product via admin dashboard
-**Blocking:** Yes for lead capture landing page
+**Blocking:** Yes — **needed before launch** (the `/free/[slug]` landing pages do not exist without at least one active sample product; lead capture from sample products is unavailable; `/sweepstakes` "Ways to enter" section will show no free resources)
 
-Create at minimum one sample product (e.g., "10 Top Business Lessons Guide"):
-- Upload PDF to `sample-products` bucket
-- Configure lead capture fields (name, email, phone optional)
-- Set upsell products (link to membership)
+1. Navigate to `/admin/sample-products` → New Sample Product.
+2. Fill in title, slug, description. Slug must be lowercase alphanumeric with hyphens (e.g., `top-10-business-lessons`).
+3. On the edit page, upload the PDF (→ `sample-products` bucket) and a cover image (→ `covers` bucket).
+4. Configure lead capture fields: `require_phone` toggle, entry amount override (`custom_entry_amount` if different from the sweepstake default).
+5. Set upsell products: link to a featured e-book and/or toggle `upsell_membership` to show the membership upsell on the download page.
+6. Toggle the product to active.
 
-- [ ] Sample product created
-- [ ] Lead capture form configured
+The landing page is then live at `/free/{slug}`.
+
+- [ ] Sample product created with title, slug, description
+- [ ] PDF uploaded to `sample-products` bucket
+- [ ] Cover image uploaded
+- [ ] Lead capture fields configured
 - [ ] Upsell products linked
+- [ ] Product marked active

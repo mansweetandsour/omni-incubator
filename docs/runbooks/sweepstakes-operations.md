@@ -1,8 +1,6 @@
 # Runbook: Sweepstakes Operations
 
-Phase 4A delivers the sweepstakes entry engine and admin management UI. This runbook covers how to create and manage a sweepstake through the admin interface.
-
-**Phase 4B will add:** drawing tools, winner notification, and CSV export. The drawing and export sections below are stubs to be completed in Phase 4B.
+Phase 4A delivers the sweepstakes entry engine and admin management UI. Phase 4B adds CSV export, admin user management, and public-facing sweepstakes pages. This runbook covers how to create and manage a sweepstake through the admin interface.
 
 ---
 
@@ -108,25 +106,59 @@ Once ended:
 
 ---
 
-## 6. Run a Drawing (Phase 4B — stub)
+## 6. Run a Drawing
 
-Drawing tools will be added in Phase 4B. Until then, a winner can be selected manually:
+After a sweepstake has ended (status = `ended`):
 
-1. Export the entries for the sweepstake from the `sweepstake_entries` table (Supabase Dashboard → Table Editor → `sweepstake_entries`, filter by `sweepstake_id`).
-2. Select a winner based on your official rules (weighted by `total_entries` if applicable).
-3. Update `sweepstakes.winner_user_id` and `winner_drawn_at` directly in the database.
+1. Export entries as CSV (see section 7) to get the full participant list with entry counts.
+2. Select a winner according to your official rules. If weighted by `total_entries`, each entry represents one chance — use your random selection method on the expanded list.
+3. Record the winner in the database:
+   - In Supabase Dashboard → Table Editor → `sweepstakes`, find the row by `id`.
+   - Set `winner_user_id` to the winning user's UUID (from `profiles.id`).
+   - Set `winner_drawn_at` to the current timestamp (e.g., `NOW()`).
+   - Set `status` to `drawn`.
+4. Notify the winner per your official rules (winner notification is a manual step — automated winner emails are not yet implemented).
+
+**Note:** There is no automated drawing tool in the admin UI in Phase 4B. The steps above use the Supabase Dashboard directly.
 
 ---
 
-## 7. Export Entries as CSV (Phase 4B — stub)
+## 7. Export Entries as CSV
 
-A CSV export UI will be added in Phase 4B. Until then, use the Supabase Dashboard:
+The admin sweepstake detail page (`/admin/sweepstakes/[id]`) includes an **Export CSV** button. Clicking it triggers a download via `GET /api/admin/sweepstakes/[id]/export`.
 
-1. Go to Supabase Dashboard → Table Editor → `sweepstake_entries`.
-2. Filter by `sweepstake_id` (the UUID of the completed sweepstake).
-3. Use the Export button to download as CSV.
+**What the export does:**
 
-The export includes: `user_id`, `total_entries`, `source`, `created_at`, `order_id`, `product_id`.
+1. Calls the `refresh_entry_verification` Postgres RPC to ensure the `entry_verification` materialized view is up to date.
+2. Calls the `export_sweepstake_entries(sweepstake_id)` SECURITY DEFINER RPC to join `entry_verification` with `profiles`.
+3. Returns a CSV file with 10 columns ordered by `total_entries DESC`.
+
+**CSV columns:**
+
+| Column | Description |
+|---|---|
+| `user_email` | Participant email |
+| `display_name` | Display name |
+| `total_entries` | Total entries (all sources) |
+| `purchase_entries` | From e-book purchases and membership payments |
+| `non_purchase_entries` | From confirmed lead captures |
+| `admin_entries` | From admin manual adjustments |
+| `coupon_bonus_entries` | From coupon bonus entries |
+| `list_price_basis_cents` | List price used for entry calculation |
+| `amount_collected_cents` | Actual amount collected |
+| `actual_order_total_cents` | Order total |
+
+**To export manually (fallback):**
+
+If the admin UI is unavailable, call the endpoint directly:
+
+```bash
+curl -b "your-session-cookie" \
+  "https://omniincubator.org/api/admin/sweepstakes/{sweepstake-uuid}/export" \
+  -o entries.csv
+```
+
+You must be authenticated as an admin user for this request to succeed.
 
 ---
 
@@ -137,6 +169,7 @@ The export includes: `user_id`, `total_entries`, `source`, `created_at`, `order_
 | `purchase` | Stripe `checkout.session.completed` (payment or combined mode) |
 | `subscription_renewal` | Stripe `invoice.paid` (renewal, when no combined-checkout order exists) |
 | `non_purchase_capture` | `POST /api/lead-capture/confirm` — after email confirmation |
+| `admin_adjustment` | Admin entry adjustment form at `/admin/users/[id]` — positive (bonus) or negative (correction) |
 
 ---
 

@@ -1,50 +1,32 @@
-# ARCH_CONFLICTS.md — Phase 4A: Sweepstakes Core
+# ARCH_CONFLICTS.md — Phase 4B: Sample Products & Admin Tools
 **Architect Agent Output**
 **Date:** 2026-04-09
-**Phase:** 4A — Sweepstakes Core
+**Phase:** 4B — Sample Products & Admin Tools
 
 ---
 
-## Conflict 1: EntryBadge cannot be used inside LoadMoreButton (client component boundary)
+## Conflict 1 — CSV export requires one new migration (RPC function)
 
-**PRD requirement (R12, R14):** "EntryBadge used on product cards in library" — implying it should appear on all product cards including those loaded by the Load More mechanism.
+**PRD_REPORT.md states (R7, Cross-Phase Dependencies):**
+> "All schema tables complete — no new migrations" and "refresh_entry_verification Postgres RPC function confirmed present."
 
-**Implementation constraint:** `EntryBadge` is an async server component. It cannot be rendered inside `LoadMoreButton`, which is a `'use client'` component. Async RSCs cannot cross the client boundary dynamically.
+**Architect decision:**
+A second RPC function `export_sweepstake_entries` must be added as a new migration (`20240101000018`). The Supabase JS client cannot perform a JOIN between the `entry_verification` materialized view and the `profiles` table using its normal `.select()` FK syntax — materialized views do not have the Supabase-tracked foreign key metadata that enables the `profiles!inner(...)` join shorthand. To avoid fetching all rows and performing a N+1 profile lookup in application code, the cleanest and most correct approach is a `SECURITY DEFINER` SQL function that executes the join server-side and returns the already-aliased columns needed for the CSV export. This is a single small migration (1 function) and is wholly additive — it does not change any existing table, view, or function.
 
-**Architectural decision:** Entry badge data (active sweepstake + multiplier) is fetched once in the server-rendered library page (`src/app/library/page.tsx`) and passed as a `sweepData` prop to `ProductCard`. `ProductCard` computes the badge inline from the prop. `LoadMoreButton` renders additional `ProductCard` instances, but those do NOT receive `sweepData` (the API route at `/api/library/products` does not include sweepstake data).
-
-**Accepted gap:** Cards loaded via "Load More" do not display entry badge text. This is a cosmetic limitation — entries are still correctly awarded on purchase. Entry badge display on initial server-rendered cards (12 per page) covers the primary UX use case.
-
-**Alternative considered and rejected:** Making `LoadMoreButton` fetch sweepstake data separately via a client-side fetch on mount adds complexity and a client-visible loading state for non-critical data. This is not justified.
-
-**PRD Agent ruling requested:** None needed — this is an implementation HOW decision, not a requirement violation. The PRD says "Used on product cards in library" without specifying all infinitely-loaded cards.
+**Impact:** One additional migration file. This is a schema-safe addition. DevOps task D1 covers applying it.
 
 ---
 
-## Conflict 2: One new migration required despite "no migrations" scope boundary
+## Conflict 2 — `file_path NOT NULL` constraint vs. save-then-upload UX pattern
 
-**PRD requirement (§5 Scope, PRD_REPORT §5):** "No new Supabase migrations — no schema changes required; all tables exist."
+**PRD_REPORT.md states (R1.2):**
+> "`file_path` (file upload → Supabase Storage `sample-products` bucket, private; store resulting path in `file_path` column; required)"
 
-**Implementation constraint:** `refreshEntryVerification()` must call `REFRESH MATERIALIZED VIEW CONCURRENTLY public.entry_verification`. The Supabase JS client cannot execute DDL statements directly. A Postgres wrapper function is required for `adminClient.rpc('refresh_entry_verification')` to work.
+**Architect decision:**
+The `sample_products.file_path` column is `NOT NULL` (confirmed in migration `20240101000007`). However, adopting the same "save product first, then upload files" UX pattern used for ebook products (where file upload sections are disabled until after first save) means the initial `createSampleProduct` insert must write a valid non-null value before any file is uploaded. The chosen approach is `file_path = ''` (empty string) on create. The upload API (`POST /api/admin/sample-products/[id]/upload`) then sets the real path. Admins should not be able to make a product `is_active = true` with an empty file_path — the edit form can add a client-side warning if `file_path` is empty and `is_active` is being toggled on. The Backend agent must ensure the initial insert uses `''` and the TypeScript type for `file_path` in the Server Action does not reject empty string.
 
-**Architectural decision:** Add one new migration (`20240101000017_refresh_entry_verification_fn.sql`) that creates `public.refresh_entry_verification()`. This adds a stored function only — no schema changes, no table alterations, no data migrations. It does not change any table structure.
-
-**Justification:** The out-of-scope boundary said "no schema changes required" referring to tables and columns. A stored function to expose an existing DDL operation is a necessary operational bridge, not a schema change.
-
-**PRD Agent ruling requested:** None needed — this is an unambiguous technical necessity. The function could also be deployed manually outside of migrations, but tracking it in migrations is better practice and consistent with the project's approach.
+This is a minor deviation from the strict reading of "required" in the PRD, but it is technically necessary given the two-step UX flow and the existing project pattern. No PRD ruling is needed — it does not change observable product behavior (the file is set before the product is made active and accessible to users).
 
 ---
 
-## Conflict 3: `awardPurchaseEntries` does not check for active sweepstake — caller is responsible
-
-**PRD requirement (R1.2):** "Returns `{ totalEntries }` or null if no active sweepstake found."
-
-**Implementation decision:** `awardPurchaseEntries` does NOT query for an active sweepstake internally. The `sweepstakeId` is passed in by the caller. The webhook handlers query the active sweepstake before calling `awardPurchaseEntries`, and skip the call if none is found.
-
-**Reasoning:** The PRD's "returns null if no active sweepstake" wording describes the net effect from the caller's perspective, not the internal implementation. Having `awardPurchaseEntries` accept a `sweepstakeId` parameter (which must be provided) is cleaner and avoids an extra DB query inside a function that already has a sweepstakeId from the caller. The "returns null" semantic is satisfied by the caller's conditional: if no active sweepstake, `awardPurchaseEntries` is never called and the caller effectively receives "null" (no entries awarded).
-
-**PRD Agent ruling requested:** None needed — this is a HOW decision. The net behavior is identical: no active sweepstake → no entries awarded.
-
----
-
-Status: 3 advisory conflicts documented. No blocking conflicts. No PRD requirements violated. Pipeline may proceed.
+Status: 2 conflicts above — both advisory, no PRD ruling required. Implementation decisions are fully specified in SPEC.md. Pipeline may proceed.

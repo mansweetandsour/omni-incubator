@@ -77,7 +77,7 @@ PRD excerpt:
   Exit criteria: Entry engine works end-to-end. Purchase entries award on webhook. Lead capture entries award on confirmed email. Admin can manage sweepstakes, multipliers, coupons.
 
 ## Phase 4B: Sample Products & Admin Tools
-Status: PENDING
+Status: COMPLETE
 Dependencies: Phase 4A complete
 PRD excerpt:
   /admin/sample-products: create/edit with file upload to sample-products bucket, capture config (require_email always, require_phone toggle), upsell config (upsell_product_id dropdown, upsell_membership toggle, custom upsell_heading/body), custom entry amount, active toggle. Stats: captures, confirmation rate.

@@ -1,199 +1,149 @@
-# PRD — Phase 4A: Sweepstakes Core
+# PRD — Phase 4B: Sample Products & Admin Tools
 
 ## Phase Goal
-Build the complete sweepstakes entry system: entry calculation engine, lead capture with email confirmation, entry awarding on purchases and confirmed captures, admin sweepstake/multiplier/coupon management, entry badges on products, multiplier banner.
-
-**Pre-requisite note:** Resend domain verification (EXTERNAL TASK E9/E18) is required for confirmation emails to deliver. If Resend is not configured, the confirmation email send will fail gracefully (logged, not thrown). The pipeline continues — the system is built correctly regardless.
+Build sample product landing pages and download flow, admin user management with entry adjustment, sweepstakes CSV export, user profile entries page, public sweepstakes page, official rules page, and admin dashboard entry stats widget.
 
 ## Requirements
 
-### R1 — Entry Calculation Engine
-- `src/lib/sweepstakes.ts` exports:
+### R1 — Admin Sample Products CRUD
+- `/admin/sample-products`: list all sample products with active status, capture count, confirmation rate stats
+- Create/edit form at `/admin/sample-products/new` and `/admin/sample-products/[id]/edit`:
+  - Fields: title, slug (auto-generated from title, editable), description (short), long_description (markdown), cover image upload → `covers` bucket, file upload (PDF) → `sample-products` bucket (private)
+  - Capture config: require_email (always true, disabled toggle), require_phone (toggle)
+  - Upsell config: upsell_product_id (dropdown of active ebooks), upsell_membership toggle, upsell_heading (text), upsell_body (text)
+  - Entry config: custom_entry_amount (optional integer, overrides sweepstake.non_purchase_entry_amount)
+  - Active/inactive toggle
+- Stats shown on list: total captures, confirmed captures, confirmation rate (confirmed/total * 100)
+- "View landing page" link → opens `/free/{slug}` in new tab
+- Server Actions: createSampleProduct, updateSampleProduct, toggleSampleProductActive
 
-**`calculateEntries(params)`** — pure function per blueprint §5.1:
-```typescript
-{
-  product: { price_cents, member_price_cents, custom_entry_amount },
-  listPriceCents: number,   // ALWAYS full list price
-  pricePaidCents: number,   // actual amount charged (audit only)
-  sweepstakeId: string,
-  couponId?: string,
-}
-→ { baseEntries, multiplier, couponMultiplier, bonusEntries, totalEntries, listPriceCents, amountCents }
-```
-- baseEntries = custom_entry_amount if set, else floor(listPriceCents / 100)
-- globalMultiplier = MAX(active multipliers for sweepstake) or 1.0
-- coupon: if multiplier type → couponMultiplier = entry_value; if fixed_bonus → bonusEntries = entry_value
-- totalEntries = floor(baseEntries * globalMultiplier * couponMultiplier) + bonusEntries
+### R2 — Sample Product Landing Page
+- `/free/[slug]` (public, dynamic, ISR revalidate 60)
+- Fetch sample_product by slug. If not found or `is_active=false`: 404.
+- Layout (top to bottom):
+  1. Hero: title (large), cover image (left) + description copy (right), sweepstake entry callout: "🎟️ Download free + earn {X} entries in our ${prize_description} sweepstake!" (X = custom_entry_amount OR sweepstake.non_purchase_entry_amount)
+  2. Capture form: email (always), phone (if require_phone=true). Submit → POST /api/lead-capture with source='sample_product', sampleProductId. Success state: "📧 Check your email! Click the confirmation link to unlock your free download and earn your entries."
+  3. Content section: render long_description as markdown (if set)
+  4. Upsell section (if upsell_product_id or upsell_membership set):
+     - If upsell_product_id: "Want to go deeper?" → featured ebook card with price, member price, entry badge, "Buy" CTA linking to /library/{ebook_slug}
+     - If upsell_membership: membership pitch with "Join Omni Membership" CTA → /pricing
+     - Custom upsell_heading/upsell_body from product config
+  5. Sweepstake info block: current prize amount, countdown timer to end_at, link to /sweepstakes
+- SEO: generateMetadata() with product title, description, cover image as OG
 
-**`awardPurchaseEntries(params)`** — called from webhook handler:
-```
-{ orderId, orderItemId, productId, userId, sweepstakeId, listPriceCents, pricePaidCents, couponId? }
-→ creates sweepstake_entries row with source='purchase', inserts into DB
-→ calls refreshEntryVerification() after insert
-→ returns { totalEntries } or null if no active sweepstake
-```
+### R3 — Sample Product Download Page
+- `/free/[slug]/download` (public, no auth required)
+- Query param: `?token={confirmation_token}`
+- On load: verify lead_captures by token, check confirmed_at IS NOT NULL
+- If not confirmed (confirmed_at IS NULL): redirect to /confirm/{token} (let confirm page handle it)
+- If no token or token not found: redirect to /free/{slug} (send them back to capture form)
+- If confirmed:
+  - Show: cover image, title, "Download" button
+  - Download button → GET /api/sample-products/[slug]/download?token={token} → generates signed URL from sample-products bucket (1hr expiry) → redirect
+  - Below download: upsell section (same as landing page section 4)
+  - Entry confirmation: "🎟️ You earned {X} entries!"
 
-**`awardLeadCaptureEntries(params)`** — for non-purchase captures per §5.2b:
-```
-{ leadCaptureId, userId?, sweepstakeId, sampleProductId? }
-→ base entries = sample_product.custom_entry_amount || sweepstake.non_purchase_entry_amount
-→ NO global multipliers, NO coupons
-→ creates sweepstake_entries row with source='non_purchase_capture'
-→ returns { totalEntries }
-```
+### R4 — Sample Product Download API
+- `GET /api/sample-products/[slug]/download`: public (no auth cookie), requires valid token query param
+  - Look up lead_captures by token, verify confirmed_at IS NOT NULL
+  - If not confirmed: 403
+  - Get sample_product by slug, get file_path
+  - Generate signed URL (1hr) from `sample-products` bucket
+  - Redirect (307) to signed URL
 
-**`refreshEntryVerification()`** — debounced: calls `REFRESH MATERIALIZED VIEW CONCURRENTLY entry_verification`. Debounce: track last_refresh timestamp, skip if refreshed within last 60 seconds.
+### R5 — Admin User Management
+- `/admin/users`: search page
+  - Search input (text) → searches profiles by email, phone, display_name, username, order_number (ILIKE on text fields, exact match on order_number)
+  - Results table: avatar, display_name, email, role badge, subscription status, created_at
+  - Click → user detail page
 
-**Unit tests**: Write Vitest unit tests for calculateEntries and awardLeadCaptureEntries covering the cases in §5.1 and §5.2b of the blueprint.
+- `/admin/users/[id]`: user detail page
+  - Profile section: display_name, email, phone, role, stripe_customer_id, created_at
+  - Subscription section: current plan, status, trial_end, period_end, cancel_at_period_end
+  - Orders section: list of orders (order_number, date, total, status, items count)
+  - E-books section: list of owned e-books
+  - Entry breakdown section: per sweepstake — total entries, breakdown by source (purchase/non_purchase/admin/coupon_bonus)
+  - Entry history section: scrollable list of all sweepstake_entries rows for this user (source, entries, date, notes)
 
-### R2 — Wire Entry Awarding into Webhook
-Replace the `// TODO Phase 4A` stubs in `src/app/api/webhooks/stripe/route.ts`:
-- On `checkout.session.completed` (payment mode): after order creation, call `awardPurchaseEntries()` for each order_item
-- On `checkout.session.completed` (subscription + one-time items): award entries for the e-book item only, set `entries_awarded_by_checkout = true` on the order
-- On `invoice.paid` (amount > 0, not proration): call `awardPurchaseEntries()` for the subscription renewal. Check `entries_awarded_by_checkout` on related order before awarding to prevent double-count.
+### R6 — Admin Entry Adjustment
+- Form on user detail page (`/admin/users/[id]`):
+  - Fields: sweepstake (dropdown, defaults to active sweepstake), entries (integer, positive or negative), notes (required text)
+  - Submit → Server Action `adjustUserEntries(userId, sweepstakeId, entries, notes)`:
+    - Creates sweepstake_entries row with source='admin_adjustment', base_entries=entries value, total_entries=entries value, notes=notes
+    - Negative entries are allowed (deductions)
+    - Calls refreshEntryVerification()
+  - Revalidates the user detail page
 
-### R3 — Lead Capture API
-- `POST /api/lead-capture`: public, rate limited 5/IP/hour via Upstash Redis
-  - Body: `{ email: string, phone?: string, source: 'popup' | 'footer' | 'marketplace_coming_soon' | 'sample_product', sweepstakeId?: string, sampleProductId?: string }`
-  - Validate email format
-  - Find active sweepstake (if sweepstakeId not provided, find the one with status='active')
-  - Check duplicate: does lead_captures row exist with same email + sweepstake_id? If yes: return 200 with `{ duplicate: true, message: "You've already entered" }`
-  - Generate `confirmation_token` (crypto.randomUUID())
-  - Create lead_captures row with `confirmed_at = NULL`, `entry_awarded = false`, `confirmation_sent_at = NOW()`
-  - Send confirmation email (lead_capture_confirm or sample_product_confirm template depending on source)
-  - Return: `{ success: true }`
-  - If Upstash not configured: skip rate limiting, log warning
+### R7 — Sweepstakes CSV Export
+- `/admin/sweepstakes/[id]/export`: GET endpoint (admin only)
+- Calls REFRESH MATERIALIZED VIEW CONCURRENTLY entry_verification first (via RPC)
+- Queries entry_verification materialized view joined with profiles
+- Returns CSV with columns (per §5.7 of blueprint): user_email, display_name, total_entries, purchase_entries, non_purchase_entries, admin_entries, coupon_bonus_entries, list_price_basis_cents, amount_collected_cents, actual_order_total_cents
+- Content-Type: text/csv, Content-Disposition: attachment; filename=sweepstake-{id}-entries.csv
 
-### R4 — Email Confirmation API
-- `POST /api/lead-capture/confirm`: public, no auth
-  - Body: `{ token: string }`
-  - Look up lead_captures by confirmation_token
-  - If not found: return 404 `{ error: 'Invalid or expired token' }`
-  - If already confirmed (confirmed_at IS NOT NULL): return 200 `{ alreadyConfirmed: true, entries: N, source }`
-  - If token older than 72 hours (confirmation_sent_at < NOW() - 72h): return 410 `{ error: 'Token expired', email }` (include email so they can re-submit)
-  - Set `confirmed_at = NOW()`, `entry_awarded = true`
-  - Call `awardLeadCaptureEntries()`
-  - Determine redirect: if source='sample_product': return `{ redirect: '/free/{slug}/download?token={token}' }`; else: return `{ success: true, entries: N, source, sweepstake: { title, prize_description } }`
+### R8 — User Entries Profile Page
+- `/profile/entries`: auth required
+- Fetch current active sweepstake
+- If no active sweepstake: show "No active sweepstake right now. Check back soon!" with link to /sweepstakes
+- If active: 
+  - Large display: total entry count for current period
+  - Breakdown: mini stats (purchase entries, non-purchase entries, admin adjustments, coupon bonuses)
+  - Entry history list: scrollable list of own sweepstake_entries (date, source label, entries, notes for admin_adjustment)
+  - "How to earn more entries" CTA section: links to library + /free (sample products)
 
-### R5 — Resend Confirmation API
-- `POST /api/lead-capture/resend`: public, rate limited 1/5min per email via Upstash
-  - Body: `{ email: string }`
-  - Look up pending lead_captures by email (confirmed_at IS NULL), most recent
-  - If not found: return 200 silently (no enumeration)
-  - If token age < 5 minutes: return 429 (too soon)
-  - If token age > 72 hours: return 410 (expired, must re-submit form)
-  - Regenerate confirmation_token, update confirmation_sent_at
-  - Resend confirmation email
-  - Return 200
+### R9 — Public Sweepstakes Page
+- `/sweepstakes` (public, ISR revalidate 60)
+- Fetch active sweepstake (if exists) + any drawn sweepstakes (for past winners)
+- Sections:
+  1. Hero: current prize amount (large), prize_description, countdown timer to end_at
+  2. "How it works": 3-step breakdown (enter free / buy to earn more / winner drawn)
+  3. "Ways to enter": list entry methods — free popup/email capture, buying e-books (with entry rates), membership (entries per month/year), sample products (link to /free/[slug] for any active sample products)
+  4. Link to official rules: `/sweepstakes/rules`
+  5. Past winners section (if any drawn sweepstakes with winner_user_id set): "Previous Winners" with display_name, prize_description, drawn date
+- If no active sweepstake: show "Our next sweepstake is coming soon" message
 
-### R6 — Lead Capture Popup
-- `src/components/sweepstakes/LeadCapturePopup.tsx`: client component
-  - Trigger: setTimeout 10s OR scroll to 50% of document.body.scrollHeight (whichever fires first)
-  - Suppression:
-    - `localStorage.getItem('omni_popup_dismissed')` with timestamp — re-show after 30 days
-    - `localStorage.getItem('omni_popup_submitted')` — never show again once submitted
-  - UI: modal dialog (shadcn Dialog), headline "🎟️ Enter for a chance to win ${prize_amount}", email input (required), phone input (optional), submit button
-  - On submit: POST /api/lead-capture with source='popup'
-  - Success state: "📧 Check your email to confirm your entry!" with "Resend email" button (calls /api/lead-capture/resend)
-  - On dismiss: set omni_popup_dismissed timestamp in localStorage
-  - Also: an inline version `LeadCaptureForm` (no popup behavior, just the form) for the marketplace page and footer
+### R10 — Official Rules Page
+- `/sweepstakes/rules` (static, no data fetching)
+- Legal content placeholder covering: no purchase necessary, how to enter (free methods), eligibility (18+, US residents), prize description placeholder, odds of winning, drawing method, winner notification, claiming prize, sponsor (Omni Incubator)
+- Mark with `{PLACEHOLDER — EXTERNAL TASK E14: Have legal review this content}`
+- Static page, no ISR needed
 
-### R7 — Email Confirmation Page
-- `/confirm/[token]` page: public, no auth
-  - On mount: calls `POST /api/lead-capture/confirm` with token from URL
-  - If source='sample_product': redirects to `/free/{slug}/download?token={token}`
-  - If popup/other:
-    - Success: "✅ You're in! You earned {N} entries in the {sweepstake_title} sweepstake."
-    - Shows upsell CTAs: "Browse the E-book Library" + "Join Omni Membership"
-    - If active multiplier: "{M}X entry bonus active on all purchases!"
-  - Error states:
-    - Invalid token: "This link is invalid. Submit your email again." + link to homepage
-    - Expired: "This link has expired (72 hours). Enter your email again to get a new one." + email re-submit form
-    - Already confirmed: "You've already confirmed! You have {N} entries." + upsell CTAs
-
-### R8 — Lead → Account Linking
-- After new user signup (auth.users INSERT trigger calls handle_new_user which already links lead_captures):
-  - Application code on callback route: after session is established, run:
-    ```sql
-    UPDATE sweepstake_entries SET user_id = $new_user_id
-    WHERE lead_capture_id IN (
-      SELECT id FROM lead_captures WHERE user_id = $new_user_id
-    ) AND user_id IS NULL
-    ```
-  - Add this SQL call to `src/app/api/auth/callback/route.ts` after session exchange
-
-### R9 — Admin Sweepstakes CRUD
-- `/admin/sweepstakes`: list all sweepstakes with status badges (draft/active/ended/drawn)
-- Create/edit form: title, description, prize_amount_cents, prize_description, start_at, end_at, non_purchase_entry_amount, official_rules_url
-- Activate button: sets status='active'. Pre-check: if another sweepstake is already active → show error "Another sweepstake is already active"
-- End button: sets status='ended'
-- Status transitions: draft→active→ended→drawn
-
-### R10 — Admin Multipliers
-- `/admin/sweepstakes/[id]/multipliers`: list multipliers for selected sweepstake
-- Create/edit form: name, description, multiplier value, start_at, end_at, is_active toggle
-- Overlap warning: check if new multiplier period overlaps any existing active multiplier → show warning but allow save
-- Toggle active/inactive
-
-### R11 — Admin Coupons (Entry Bonus Only)
-- `/admin/coupons`: list all coupons with status, usage count, expiry
-- Create/edit form: code (input, auto-uppercased on blur), name, entry_type (multiplier/fixed_bonus), entry_value, max_uses_global, max_uses_per_user (default 1), expires_at, sweepstake assignment (optional dropdown)
-- Code is immutable after creation (no edit on code field in edit mode)
-- Toggle active/inactive
-
-### R12 — Entry Badge Component
-- `src/components/sweepstakes/EntryBadge.tsx`:
-  - Props: `{ product: { price_cents, custom_entry_amount }, className? }`
-  - Server-side: fetch active sweepstake + active multiplier (cached 60s with unstable_cache)
-  - Compute base entries (custom_entry_amount OR floor(price_cents/100))
-  - If active multiplier: show `🔥 {M}X ENTRIES — Earn {N} entries`
-  - Else: show `🎟️ Earn {N} entries`
-  - Used on product cards in library and on e-book detail page
-
-### R13 — Multiplier Banner
-- `src/components/sweepstakes/MultiplierBanner.tsx`:
-  - Server component, fetches active multiplier for active sweepstake (cached 60s)
-  - If active multiplier exists: renders banner at top of layout with: "{multiplier.name} — {M}X entries on all purchases! Ends {end_at formatted}"
-  - Dismissable with X button (client state, shows inline — NOT localStorage, re-shows on page load)
-  - Wire into root layout in the multiplier banner slot (the empty div from Phase 1)
-
-### R14 — Wire Entry Badges on Library
-- Update product cards in `/library` to use `<EntryBadge product={product} />`
-- Update `/library/[slug]` detail page: show entry badge + "Members earn {N} entries (based on full $X price)" note
-
-### R15 — Admin No-Sweepstake Warning
-- On admin dashboard (`/admin` or `/admin/products`): query for active sweepstake. If none: show a warning banner "⚠️ No active sweepstake — purchases are not earning entries"
+### R11 — Admin Dashboard Stats Widget
+- Update `/admin` page (currently redirects to /admin/products): make it a real dashboard page
+- Stats cards:
+  - Active members count (subscriptions with status IN ('trialing', 'active'))
+  - Total revenue this month (SUM of orders.total_cents for current month, status='completed')
+  - Active sweepstake summary: title, total entries, days remaining (if active sweepstake exists)
+  - Warning banner if no active sweepstake
+- Recent orders: last 10 orders with user email, amount, status
+- Lead capture stats: pending confirmations count, confirmed today count
+- Link to full sweepstake stats: /admin/sweepstakes/[id]
 
 ## Acceptance Criteria
-1. `calculateEntries()` returns correct results for all 5 test cases in §5.2 of blueprint (custom_entry_amount, dollar-based, multiplier, coupon multiplier, fixed_bonus coupon)
-2. `awardLeadCaptureEntries()`: base entries = sweepstake.non_purchase_entry_amount, multiplier=1.0, coupon_multiplier=1.0
-3. `POST /api/lead-capture` returns 200 and creates lead_captures row with confirmed_at=NULL
-4. Duplicate email+sweepstake_id POST returns 200 with `{ duplicate: true }`
-5. `POST /api/lead-capture/confirm` with valid token: sets confirmed_at, sets entry_awarded=true, creates sweepstake_entries row
-6. Confirm with expired token (>72h): returns 410
-7. Confirm with already-confirmed token: returns 200 with alreadyConfirmed=true
-8. Confirm with sample_product source: returns redirect to download page
-9. `POST /api/lead-capture/resend` with valid email: regenerates token, returns 200
-10. Webhook checkout.session.completed (payment): sweepstake_entries row created for each order_item
-11. Webhook invoice.paid (amount>0): sweepstake_entries row created for subscription renewal
-12. Webhook invoice.paid ($0 trial): no entries created
-13. entries_awarded_by_checkout dedup: combined checkout doesn't double-award on invoice.paid
-14. `/confirm/[token]` page loads and shows success state for valid confirmed token
-15. `/confirm/[token]` shows error for invalid token
-16. LeadCapturePopup renders in root layout, triggers after 10s/50% scroll
-17. EntryBadge component renders with correct entry count on library cards
-18. MultiplierBanner renders in layout when active multiplier exists
-19. Admin can create/activate/end sweepstake. Duplicate activate shows error.
-20. Admin can create/edit/toggle multipliers with overlap warning
-21. Admin can create/toggle coupons. Code uppercased automatically.
-22. `npm run build` passes with no errors
-23. `npx tsc --noEmit` passes with 0 errors
-24. Vitest unit tests for calculateEntries pass
+1. Admin can create sample product with file upload, cover upload, capture config, upsell config
+2. `/free/[slug]` renders for active sample product — 404 for inactive/missing
+3. `/free/[slug]` capture form submits to /api/lead-capture with source='sample_product'
+4. `/free/[slug]/download?token={valid_confirmed_token}` shows download button and upsell
+5. `/free/[slug]/download` with unconfirmed token redirects to /confirm/{token}
+6. `/free/[slug]/download` with no token redirects to /free/{slug}
+7. `GET /api/sample-products/[slug]/download` returns 403 for unconfirmed token
+8. `GET /api/sample-products/[slug]/download` returns signed URL redirect for confirmed token
+9. `/admin/users` search returns results matching email/name/username
+10. `/admin/users/[id]` shows profile, subscription, orders, e-books, entry breakdown
+11. Admin entry adjustment creates sweepstake_entries row with source='admin_adjustment' and correct entries value (including negative)
+12. `/admin/sweepstakes/[id]/export` returns valid CSV with correct columns
+13. CSV export refreshes materialized view before generating data
+14. `/profile/entries` shows total entries and breakdown for active sweepstake
+15. `/profile/entries` shows "no active sweepstake" message when none exists
+16. `/sweepstakes` renders with current prize, countdown, entry methods
+17. `/sweepstakes/rules` renders with legal placeholder content
+18. `/admin` dashboard shows stats cards (member count, revenue, sweepstake summary)
+19. `/admin` dashboard shows no-sweepstake warning when none active
+20. `npm run build` passes with no errors
+21. `npx tsc --noEmit` passes with 0 errors
 
-## Out of Scope for Phase 4A
-- Sample product landing pages and download pages (Phase 4B)
-- Admin user management and entry adjustment (Phase 4B)
-- Entry export CSV (Phase 4B)
-- /profile/entries page (Phase 4B)
-- /sweepstakes public page (Phase 4B)
+## Out of Scope for Phase 4B
+- Marketplace service detail pages (Phase 5)
+- Homepage hero content (Phase 6)
+- SEO/sitemap (Phase 6)
+- Production deployment (Phase 6)

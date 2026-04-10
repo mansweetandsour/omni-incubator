@@ -128,3 +128,30 @@
     @apply font-sans;
   }
 }
+
+@layer utilities {
+  .prose {
+    color: inherit;
+    line-height: 1.75;
+  }
+  .prose h1, .prose h2, .prose h3, .prose h4 {
+    font-weight: 700;
+    line-height: 1.25;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+  }
+  .prose h1 { font-size: 1.875rem; }
+  .prose h2 { font-size: 1.5rem; }
+  .prose h3 { font-size: 1.25rem; }
+  .prose h4 { font-size: 1.125rem; }
+  .prose p { margin-top: 0.75em; margin-bottom: 0.75em; }
+  .prose ul { list-style-type: disc; padding-left: 1.5em; margin-top: 0.75em; margin-bottom: 0.75em; }
+  .prose ol { list-style-type: decimal; padding-left: 1.5em; margin-top: 0.75em; margin-bottom: 0.75em; }
+  .prose li { margin-top: 0.25em; margin-bottom: 0.25em; }
+  .prose a { color: #2563eb; text-decoration: underline; }
+  .prose code { font-family: monospace; background: rgba(0,0,0,0.06); padding: 0.1em 0.3em; border-radius: 3px; font-size: 0.9em; }
+  .prose blockquote { border-left: 4px solid #e4e4e7; padding-left: 1em; color: #71717a; font-style: italic; margin: 1em 0; }
+  .dark .prose-invert a { color: #60a5fa; }
+  .dark .prose-invert code { background: rgba(255,255,255,0.1); }
+  .dark .prose-invert blockquote { border-left-color: #52525b; color: #a1a1aa; }
+}

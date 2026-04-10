@@ -1,15 +1,105 @@
-# FRONTEND_DONE.md — Phase 4A: Sweepstakes Core
+# FRONTEND_DONE.md — Phase 4B: Sample Products & Admin Tools
 **Frontend Agent Output**
 **Date:** 2026-04-09
-**Phase:** 4A — Sweepstakes Core
+**Phase:** 4B — Sample Products & Admin Tools
 **Status:** COMPLETE
 
 ---
 
-## Verification Results
+## Phase 4B Verification Results
 
 - `node node_modules/typescript/bin/tsc --noEmit` — **0 errors**
-- `NEXT_PUBLIC_SUPABASE_URL=... node node_modules/next/dist/bin/next build` — **BUILD SUCCESSFUL** — all 52 routes compile cleanly including all Phase 4A routes
+- `NEXT_PUBLIC_SUPABASE_URL=... node node_modules/next/dist/bin/next build` — **BUILD SUCCESSFUL** — all 63 routes compile cleanly including all Phase 4B routes
+
+---
+
+## Phase 4B Files Created
+
+| File | Description |
+|---|---|
+| `src/components/sweepstakes/CountdownTimer.tsx` | Client component — days/hours/min/sec countdown, null-init to avoid hydration mismatch, "Sweepstake ended" when past |
+| `src/components/admin/sample-product-file-upload.tsx` | Client component — adapts FileUploadSection pattern for /api/admin/sample-products/[id]/upload |
+| `src/components/admin/sample-product-form.tsx` | Client component — create/edit form with slug auto-generation, slugTouched guard, upsell fields, all SPEC fields |
+| `src/components/admin/user-entry-adjustment-form.tsx` | Client component — calls adjustUserEntries server action, toast on success, inline validation |
+| `src/components/free/LeadCaptureFormFree.tsx` | Client component — 5-state machine (idle/loading/success/duplicate/error), POSTs to /api/lead-capture |
+| `src/app/(admin)/admin/sample-products/new/page.tsx` | Server component — fetches active ebooks, renders SampleProductForm |
+| `src/app/(admin)/admin/sample-products/[id]/edit/page.tsx` | Server component — fetches product + ebooks, renders form + two upload sections |
+| `src/app/(admin)/admin/sample-products/toggle.tsx` | Client component — calls toggleSampleProductActive, used in sample products list |
+| `src/app/(admin)/admin/users/[id]/page.tsx` | Server component — 7 parallel fetches, profile/sub/orders/ebooks/entry breakdown/history/adjustment form |
+| `src/app/free/[slug]/page.tsx` | Server component, revalidate=60, 5 sections, generateMetadata(), CountdownTimer, ReactMarkdown |
+| `src/app/free/[slug]/download/page.tsx` | Server component, force-dynamic, server-side redirects for all invalid states, download button as <a> link |
+| `src/app/sweepstakes/rules/page.tsx` | Static page — 9 legal sections, placeholder string visible in rendered HTML |
+| `src/app/profile/entries/page.tsx` | Server component, force-dynamic, auth via createClient(), data via adminClient, entry stats + history |
+
+---
+
+## Phase 4B Files Modified
+
+| File | Change |
+|---|---|
+| `src/app/(admin)/admin/page.tsx` | Replaced redirect stub with full dashboard — 5 stat card queries, amber warning banner, recent orders table |
+| `src/app/(admin)/admin/sample-products/page.tsx` | Replaced placeholder — table with lead capture stats, toggle, edit/view links |
+| `src/app/(admin)/admin/users/page.tsx` | Replaced placeholder — search form (GET method), ILIKE + order_number merge/dedup, results table |
+| `src/app/(admin)/admin/sweepstakes/[id]/page.tsx` | Added "Export CSV" button — `<a href>` link to /api/admin/sweepstakes/[id]/export |
+| `src/app/sweepstakes/page.tsx` | Replaced placeholder — active sweepstake hero, CountdownTimer, entry methods, past winners, sample products |
+
+---
+
+## Phase 4B Routes Implemented
+
+| Route | Type | Notes |
+|---|---|---|
+| `/admin` | Dynamic Server | Dashboard with stats |
+| `/admin/sample-products` | Dynamic Server | List with lead capture stats |
+| `/admin/sample-products/new` | Dynamic Server | Create form |
+| `/admin/sample-products/[id]/edit` | Dynamic Server | Edit form + file uploads |
+| `/admin/users` | Dynamic Server | Search with ?q= |
+| `/admin/users/[id]` | Dynamic Server | User detail + entry adjustment |
+| `/admin/sweepstakes/[id]` | Dynamic Server | Modified — added CSV export button |
+| `/free/[slug]` | ISR (60s) | Landing page with lead capture |
+| `/free/[slug]/download` | force-dynamic | Download page with token verification |
+| `/sweepstakes` | ISR (60s) | Public sweepstakes page |
+| `/sweepstakes/rules` | Static | Official rules page |
+| `/profile/entries` | force-dynamic | User entry stats + history |
+
+---
+
+## Phase 4B Deviations from SPEC.md
+
+### 1. Select string concatenation fixed to single-line strings
+
+SPEC.md showed multi-line select strings constructed with `+` concatenation. Supabase TypeScript types (`GenericStringError`) do not support dynamically concatenated select strings — only string literals. All multi-line selects collapsed to single-line literal strings. Behavior is identical.
+
+### 2. SampleProductForm: server action redirect handling
+
+`createSampleProduct` calls Next.js `redirect()` internally which throws. The form's `useTransition` callback does not wrap in try/catch for the redirect itself (per BACKEND_DONE.md instruction). On success the redirect fires; errors captured via `{ error?: string }` return.
+
+### 3. Admin dashboard: `profiles!inner(email)` join on orders
+
+Recent orders table uses `profiles!inner(email)` join. Result type union includes array or single object variant. Component handles both cases with `Array.isArray(order.profiles) ? order.profiles[0] : order.profiles`.
+
+---
+
+## Notes for QA Agent
+
+- CountdownTimer: initializes state to `null` — renders `&nbsp;` until first client tick (avoids hydration mismatch)
+- Lead capture form: sends `{ source: 'sample_product', sampleProductId: productId }` — matches API route expectation
+- Download page: all invalid/unconfirmed/mismatch states redirect server-side (no client JS needed)
+- CSV export: `<a href>` link — browser handles download natively
+- Admin users search: `<form method="GET">` — no JS, standard URL params, Next.js awaits `searchParams` Promise
+- Prose styles were already added to globals.css by the Backend agent — no duplicate styles added
+- The `revalidateTag` fix was completed by the Backend agent — no changes made to those files
+
+---
+
+## Phase 4A Archive (Previous Phase)
+
+---
+
+### Phase 4A Verification Results
+
+- `node node_modules/typescript/bin/tsc --noEmit` — **0 errors**
+- `NEXT_PUBLIC_SUPABASE_URL=... node node_modules/next/dist/bin/next build` — **BUILD SUCCESSFUL** — all 52 routes compiled cleanly
 
 ---
 
