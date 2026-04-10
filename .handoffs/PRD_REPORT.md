@@ -1,7 +1,341 @@
-# PRD Report — Phase 1: Foundation
+# PRD Report — Phase 2: Products & Library
 **Mode:** Fortification
 **Date:** 2026-04-09
-**Phase:** 1 of 6
+**Phase:** 2 of 6
+
+---
+
+## 1. Status
+
+**WARN**
+
+Requirements are substantially complete, consistent with the blueprint, and ready for the Architect to proceed. Three advisory findings are noted below — none are blockers. The most significant is a schema constraint issue (`ebooks.file_path NOT NULL` vs. the two-step create-then-upload flow) that the Architect must address explicitly in SPEC.md. The pipeline may continue.
+
+---
+
+## 2. Fortified Requirements
+
+### FR1 — Admin Layout and Route Protection
+
+The `/admin` route group must use a dedicated layout (`src/app/(admin)/layout.tsx` or equivalent route group) with a persistent sidebar. The sidebar must render the following navigation links in order: Dashboard (placeholder, links to `/admin`), Products (links to `/admin/products`), E-books (placeholder), Sample Products (placeholder), Services (links to `/admin/services`), Orders (placeholder), Users (placeholder), Sweepstakes (placeholder), Coupons (placeholder), Settings (placeholder). All links marked "placeholder" must render as visible sidebar entries that navigate to their route — those routes may return a placeholder page in Phase 2.
+
+**Auth protection is handled exclusively by the existing `src/middleware.ts`** — no new middleware must be created. The existing middleware already:
+- Redirects unauthenticated users hitting `/admin/*` to `/login?next={path}`
+- Redirects authenticated non-admin users (`profiles.role !== 'admin'`) to `/403`
+
+The admin layout component must NOT reimplement this guard. It may trust that any request reaching the layout has passed middleware. The admin layout must be visually distinct from the public site layout — it must not include the public navbar or footer.
+
+### FR2 — Admin Product CRUD (E-books)
+
+**List page** at `/admin/products`:
+- Renders a table of ALL product rows where `type = 'ebook'`, including inactive and soft-deleted rows (admins need visibility into archived products)
+- Columns: title, category (from `ebooks.category`), price (formatted from `products.price_cents` as dollars), active status (`products.is_active`), created date, Edit button, Archive button
+- Default sort: `products.created_at DESC`
+- The Archive button sets `products.deleted_at = NOW()` (soft delete). Archived products are visually distinguished (e.g., dimmed row) but remain visible in the list.
+
+**Create form** at `/admin/products/new`:
+- All fields below are required unless marked optional
+- `products.title` (TEXT, required)
+- `products.description` (TEXT, short blurb, required)
+- `products.long_description` (TEXT, markdown textarea, optional)
+- `products.price_cents` (displayed as dollars with `$` prefix and two decimal places in the UI; stored as integer cents — conversion: `Math.round(parseFloat(input) * 100)`)
+- Cover image upload (optional at create time — see FR3)
+- `ebooks.category` (required dropdown): values must be exactly `conceptual`, `skill`, `industry`, `startup_guide`
+- `ebooks.subcategory` (TEXT, optional)
+- `ebooks.tags` (TEXT[], tag input, optional)
+- `ebooks.operator_dependency` (required dropdown): values must be exactly `physical_service`, `hybrid`, `digital_saas`
+- `ebooks.scale_potential` (required dropdown): values must be exactly `low`, `medium`, `high`
+- `ebooks.cost_to_start` (required dropdown): values must be exactly `under_5k`, `5k_to_50k`, `over_50k`
+- `products.custom_entry_amount` (INTEGER, optional — leave NULL if not set)
+- `products.is_active` (boolean toggle, default `true`)
+- `products.is_coming_soon` (boolean toggle, default `false`)
+
+**Slug generation** (application layer, not editable by admin):
+1. `slugify(title)` — lowercase, replace non-alphanumeric with `-`, collapse consecutive `-`
+2. Query `products WHERE slug = candidate` — if no conflict, use it
+3. If conflict: append `-` + first 6 chars of a new UUID
+4. Store in `products.slug`
+
+**On create (transactional)**:
+1. Insert `products` row with `type = 'ebook'` (the column name in the DB is `type`, not `product_type`)
+2. After insert, the DB trigger `compute_member_price` fires automatically and sets `products.member_price_cents = FLOOR(price_cents * 0.5)`
+3. Insert `ebooks` row with `product_id = products.id`, `file_path = ''` (empty string placeholder — see WARN-1 in Section 6), and all taxonomy fields
+4. Attempt Stripe sync per FR4
+
+**Edit form** at `/admin/products/[id]/edit`:
+- Pre-populated with current values from both `products` and `ebooks` rows (joined by `ebooks.product_id = products.id`)
+- Same fields as create form
+- Slug is displayed as read-only; not editable
+- On save: update both `products` and `ebooks` rows; if `price_cents` changed, trigger new Stripe Price creation per FR4
+
+### FR3 — E-book File Upload
+
+File uploads are handled via a dedicated API route separate from the product create/edit form. The upload section must appear within the product create/edit form but uploads are executed independently via the API route.
+
+**Upload API route**: `POST /api/admin/ebooks/[id]/upload`
+- `[id]` is the `products.id` UUID
+- Request: `multipart/form-data` with field name `file` (the binary) and field name `type` (`main` | `preview` | `cover`)
+- Must use the admin Supabase client (`adminClient` from `src/lib/supabase/admin.ts`) for all storage operations
+- Must verify the request is from an authenticated admin before processing — read the session from cookies and check `profiles.role = 'admin'`
+
+**File routing by type**:
+- `type = 'main'`: upload to `ebooks` bucket (private), path pattern `ebooks/{product-uuid}/{original-filename}.pdf`, store raw storage path in `ebooks.file_path`
+- `type = 'preview'`: upload to `ebook-previews` bucket (public), path pattern `ebook-previews/{product-uuid}/preview-{original-filename}.pdf`, store raw storage path in `ebooks.preview_file_path`
+- `type = 'cover'`: upload to `covers` bucket (public), path pattern `covers/{product-uuid}/cover-{original-filename}.{ext}`, store the full public URL in `products.cover_image_url` (covers bucket is public — full URL appropriate for direct use in `<Image>` tags)
+
+**Constraints**:
+- Max file size: 100MB — reject with 413 status if exceeded
+- Accepted MIME types: `application/pdf` for main and preview; `image/jpeg`, `image/png`, `image/webp` for cover
+- Store raw storage path (e.g., `ebooks/abc-uuid/mybook.pdf`) in `ebooks.file_path` and `ebooks.preview_file_path`. Do NOT store signed URLs in the DB.
+- Exception: `products.cover_image_url` stores the full public URL (not a path) because covers are in a public bucket and this field is used directly for display.
+
+### FR4 — Stripe Product Sync
+
+Stripe sync runs as an application-side side effect on product create and price update. It is NOT required to succeed for the product to be created — product creation is not blocked by Stripe sync failure.
+
+**On product create** (after `products` row is successfully inserted):
+```
+if (!process.env.STRIPE_SECRET_KEY) {
+  // Skip sync entirely. Product created without Stripe IDs. No error thrown.
+  return
+}
+// Proceed with sync
+```
+
+**Sync sequence** (only when `STRIPE_SECRET_KEY` is set):
+1. Check `products.stripe_product_id` — if already set (non-null, non-empty), skip creation (idempotent guard)
+2. Create Stripe Product with `name = products.title`
+3. Create Stripe Price (full price): `unit_amount = products.price_cents`, `currency = 'usd'`, `product = stripe_product_id`
+4. Create Stripe Price (member price): `unit_amount = products.member_price_cents`, `currency = 'usd'`, `product = stripe_product_id`. NOTE: `member_price_cents` must be read from the DB row after insert (see WARN-3), not recomputed in application code.
+5. Update `products` row: set `stripe_product_id`, `stripe_price_id`, `stripe_member_price_id`
+
+**On price update** (when admin saves an edited product with a changed `price_cents`):
+1. Create NEW Stripe Price (full price) — Stripe prices are immutable
+2. Create NEW Stripe Price (member price) — read `member_price_cents` from DB after the UPDATE
+3. Update `products` row with new `stripe_price_id` and `stripe_member_price_id`
+4. Old Stripe Prices are NOT archived or deleted in Phase 2 — this is out of scope
+
+### FR5 — Library Page (`/library`)
+
+**Rendering**: Server Component with `revalidate = 60` (ISR). Filter state lives in URL search params. All filtering and sorting is server-side via Postgres query.
+
+**Data query**: Fetch `products` JOIN `ebooks` WHERE `products.is_active = true AND products.deleted_at IS NULL AND products.type = 'ebook'`.
+
+**Pagination**: 12 products per page. Initial load renders the first 12. "Load more" appends the next 12. The Architect decides whether load-more uses client-side fetching or full page navigation — HOW decision.
+
+**Filter sidebar** (multi-select checkboxes per group):
+- Category (filters on `ebooks.category`): `conceptual` → "Conceptual Learning", `skill` → "Skill Learning", `industry` → "Industry Guides", `startup_guide` → "Startup 0→1 Guides"
+- Operator Dependency (filters on `ebooks.operator_dependency`): `physical_service` → "Physical / Service", `hybrid` → "Hybrid", `digital_saas` → "Digital / SaaS"
+- Scale Potential (filters on `ebooks.scale_potential`): `low` → "Low", `medium` → "Medium", `high` → "High"
+- Cost to Start (filters on `ebooks.cost_to_start`): `under_5k` → "Under $5K", `5k_to_50k` → "$5K – $50K", `over_50k` → "Over $50K"
+
+**Filter logic**: OR within each group, AND between groups. A group with no selections active is not applied. Example: `category=conceptual,skill AND scale_potential=high` returns rows where `(ebooks.category IN ('conceptual','skill')) AND (ebooks.scale_potential = 'high')`.
+
+**Sort dropdown** (URL param `?sort=`):
+- `newest` (default): `ORDER BY products.created_at DESC`
+- `price_asc`: `ORDER BY products.price_cents ASC`
+- `price_desc`: `ORDER BY products.price_cents DESC`
+- `title_asc`: `ORDER BY products.title ASC`
+
+**Search**: Text input, debounced 300ms client-side, passed as URL search param `?q=`. Server-side query uses case-insensitive match against `products.title`, `products.description`, and `ebooks.tags`. Architect decides exact mechanism (ILIKE, full-text search, or array contains) — HOW decision.
+
+**Product card**:
+- Cover image (3:4 aspect ratio, placeholder if `products.cover_image_url` is null)
+- Title (`products.title`)
+- Author(s) — `ebooks.authors` array joined with `, `
+- Category badge — display label derived from `ebooks.category` DB value
+- Price — formatted from `products.price_cents`
+- Entry badge placeholder — static text "Earn entries"
+
+**Empty state**: "No e-books match your filters" with a "Reset Filters" button that clears all active filter and search params.
+
+### FR6 — E-book Detail Page (`/library/[slug]`)
+
+**Rendering**: Server Component with `revalidate = 60` (ISR). Slug lookup against `products.slug`.
+
+**Data query**: `products JOIN ebooks WHERE products.slug = params.slug AND products.is_active = true AND products.deleted_at IS NULL`. Return `notFound()` if no row matches.
+
+**Required content**:
+- Cover image
+- `products.title`
+- `ebooks.authors` array displayed
+- Category badge from `ebooks.category`
+- `products.description` (short)
+- `products.long_description` rendered as Markdown
+- `ebooks.tags` displayed
+- Scale metadata: `ebooks.operator_dependency`, `ebooks.scale_potential`, `ebooks.cost_to_start` (display labels, not raw values)
+- Price section: `products.price_cents` (full) + `products.member_price_cents` displayed as "Members: $X.XX — 50% off"
+- Preview download button: visible only if `ebooks.preview_file_path` is non-null and non-empty; calls `GET /api/ebooks/[id]/preview` where `[id]` = `products.id`
+- Buy CTA button: labeled "Buy — $X.XX", always active. If authenticated user has a `user_ebooks` row with matching `ebook_id`, display "You already own this e-book" note near the button — button stays active.
+- Entry badge placeholder: static text "Earn entries with purchase"
+- Membership upsell toggle: checkbox "Also join Omni Membership (+$15/mo, 7-day free trial)" — state in React local state only, not persisted
+
+### FR7 — Preview Download API
+
+**Route**: `GET /api/ebooks/[id]/preview` — public, no auth required. `[id]` is `products.id`.
+
+**Logic**:
+1. Query `ebooks WHERE product_id = params.id` — no row → 404
+2. Check `ebooks.preview_file_path` — null or empty → 404 `{ error: 'No preview available' }`
+3. Serve or redirect to the file from `ebook-previews` bucket (public bucket — no signed URL needed)
+4. Set `Content-Type: application/pdf`
+5. Set `Content-Disposition: inline`
+
+### FR8 — Admin Services CRUD
+
+**List page** at `/admin/services`: table of ALL services rows, sort `created_at DESC`. Columns: title, category, rate display, status badge, is_coming_soon badge, Edit, Archive.
+
+**Create/Edit form**:
+- `services.title` (TEXT, required)
+- `services.description` (TEXT, optional)
+- `services.long_description` (TEXT, markdown, optional)
+- Slug: auto-generated from title on create, same slugify logic as products. Read-only on edit.
+- `services.rate_type` (required dropdown, must match `service_rate_type` ENUM): `hourly`, `fixed`, `monthly`, `custom`
+- `services.rate_cents` (shown as dollars, nullable — required unless `rate_type = 'custom'`)
+- `services.rate_label` (TEXT, optional)
+- `services.category` (TEXT, required free-text)
+- `services.tags` (TEXT[], tag input, optional)
+- `services.status` (dropdown): `pending`, `approved`, `active`, `suspended` — default `pending`
+- `services.is_coming_soon` (boolean toggle, default `true` on create; all Phase 2 services are Coming Soon)
+- Archive: sets `services.deleted_at = NOW()`
+
+**Validation**: `rate_cents` must be null when `rate_type = 'custom'`; must be a positive integer otherwise.
+
+### FR9 — Marketplace Page (`/marketplace`)
+
+**Rendering**: Server Component (static or ISR — Architect decides). Replaces the Phase 1 placeholder page.
+
+**Content**:
+- Hero section: Coming Soon headline + description (copy is a design decision)
+- Service grid: if `services WHERE deleted_at IS NULL` rows exist, render service cards (title, description, category, "Coming Soon" badge)
+- Email capture form: static UI with email input and submit button, POSTs to `/api/lead-capture`. The route does not exist in Phase 2 — the form must fail gracefully (404 from the API is acceptable; no user-visible crash)
+
+**No auth required.**
+
+---
+
+## 3. Acceptance Criteria
+
+1. `/admin` route group renders a sidebar layout distinct from the public site layout. Sidebar is visible on all `/admin/*` pages that exist in Phase 2.
+2. Unauthenticated requests to `/admin/products` redirect to `/login?next=/admin/products` (existing middleware behavior — no new code required).
+3. Authenticated non-admin requests to `/admin/products` redirect to `/403` (existing middleware behavior — no new code required).
+4. `/admin/products` renders a table of all `type = 'ebook'` products (including inactive and soft-deleted), sorted by `created_at DESC`.
+5. Admin create form at `/admin/products/new` submits and inserts a `products` row with `type = 'ebook'` and a linked `ebooks` row.
+6. `products.slug` is auto-generated from title on create. Duplicate slugs are prevented by appending a UUID fragment suffix.
+7. `products.member_price_cents` equals `FLOOR(price_cents * 0.5)` after insert (set by DB trigger — application must not override this).
+8. Admin edit form at `/admin/products/[id]/edit` pre-populates correctly and saves changes to both `products` and `ebooks` rows.
+9. Archive button sets `products.deleted_at = NOW()`. Product remains visible in admin list.
+10. `POST /api/admin/ebooks/[id]/upload` with `type=cover` uploads file to `covers` bucket and stores the public URL in `products.cover_image_url`.
+11. `POST /api/admin/ebooks/[id]/upload` with `type=main` uploads file to `ebooks` bucket and stores the raw storage path in `ebooks.file_path`.
+12. `POST /api/admin/ebooks/[id]/upload` with `type=preview` uploads file to `ebook-previews` bucket and stores the raw storage path in `ebooks.preview_file_path`.
+13. Upload API rejects files over 100MB with 413 status.
+14. Upload API returns 401 or 403 for requests without a valid admin session.
+15. When `STRIPE_SECRET_KEY` is set: product create populates `products.stripe_product_id`, `products.stripe_price_id`, and `products.stripe_member_price_id`.
+16. When `STRIPE_SECRET_KEY` is not set: product create succeeds with no error; Stripe columns remain null.
+17. Stripe sync is idempotent: re-triggering sync on a product that already has `stripe_product_id` does not create duplicate Stripe objects.
+18. `/library` renders without auth. Product grid shows only `is_active = true AND deleted_at IS NULL AND type = 'ebook'` products.
+19. Library filter with category `conceptual` AND scale_potential `high` returns only products where BOTH conditions are met (OR within group, AND between groups).
+20. Library sort options (newest, price_asc, price_desc, title_asc) each correctly sort the product grid.
+21. Library pagination: initial load shows 12 products; Load More shows the next 12.
+22. Library search with a query string filters results to products where title, description, or tags match (case-insensitive).
+23. Library empty state shows "No e-books match your filters" with a Reset Filters button when no products match.
+24. `/library/[slug]` renders all required content: cover, title, authors, category badge, descriptions (markdown rendered), tags, scale metadata, full price + member price, preview download button (if preview exists), Buy CTA, entry badge placeholder, membership upsell toggle.
+25. `/library/[slug]` returns 404 for a non-existent, inactive, or deleted slug.
+26. Authenticated user who owns an e-book sees "You already own this e-book" note on the detail page. Buy button remains active.
+27. `GET /api/ebooks/[id]/preview` returns PDF with `Content-Type: application/pdf` and `Content-Disposition: inline` for a product with `preview_file_path` set.
+28. `GET /api/ebooks/[id]/preview` returns 404 for a product with no `preview_file_path`.
+29. `/admin/services` renders a table of all services rows sorted by `created_at DESC`.
+30. Admin create form at `/admin/services/new` submits and inserts a `services` row with `is_coming_soon = true`.
+31. Service slug is auto-generated from title on create. Not editable in the edit form.
+32. Services archive button sets `services.deleted_at = NOW()`.
+33. `/marketplace` renders without auth: Coming Soon hero + email capture form UI. If services rows exist, service grid is shown.
+34. `npm run build` passes with no errors.
+35. `npx tsc --noEmit` passes with 0 errors.
+
+---
+
+## 4. Cross-Phase Dependencies
+
+The following decisions are locked in from Phase 1 and must be respected:
+
+**Auth (Phase 1)**:
+- Auth strategy: Email OTP + Google OAuth via Supabase Auth — no passwords.
+- Session management: Cookie-based via `@supabase/ssr`. Server components use `createServerClient`; client components use `createBrowserClient`.
+- Admin role detection: `profiles.role = 'admin'`. The check lives in `src/middleware.ts` only. Phase 2 must NOT create a parallel guard.
+
+**Database conventions (Phase 1)**:
+- UUID PKs (`gen_random_uuid()`), `created_at`/`updated_at` on all tables, soft-delete via `deleted_at`.
+- The `products` table column is named `type` (not `product_type`). E-book products use `type = 'ebook'`.
+- `products.member_price_cents` is set by the DB trigger `compute_member_price` — application must read from DB, not recompute.
+- Storage paths stored in DB for private-bucket files. Public bucket URLs (covers, avatars) stored as full URLs.
+
+**Supabase clients (Phase 1)**:
+- `src/lib/supabase/admin.ts` exports `adminClient` — use in upload and admin API routes.
+- `src/lib/supabase/server.ts` exports async `createClient()` — use in Server Components and Route Handlers.
+
+**Storage buckets (Phase 1)**:
+- `ebooks` — private; `ebook-previews` — public; `covers` — public; `sample-products` — private; `avatars` — public.
+
+**Sentry (Phase 1)**:
+- `@sentry/nextjs` integration is live. New API routes must allow errors to propagate naturally to Sentry — do not catch-and-swallow all errors.
+
+---
+
+## 5. Scope Boundaries
+
+The following are explicitly OUT of scope for Phase 2:
+
+- **Checkout and payment flow** — Phase 3. Buy button is a UI placeholder only. No Stripe Checkout session. No payment intent. No webhook handling.
+- **E-book download for owners** (signed URL, ownership check, download_count increment) — Phase 3.
+- **Subscription management UI** — Phase 3.
+- **Live entry badge calculations and EntryBadge component** — Phase 4A. Static placeholder text only in Phase 2.
+- **Lead capture API handler** (`/api/lead-capture` route) — Phase 4A. Form UI wired to path; 404 is acceptable.
+- **MultiplierBanner content** — Phase 4A. Banner slot div already placed in root layout from Phase 1.
+- **Admin dashboard statistics** — Phase 4B. Dashboard sidebar link may be a placeholder.
+- **Service detail page** (`/marketplace/[slug]`) — Phase 5.
+- **Sample products** — Phase 4B.
+- **Admin users, orders, sweepstakes, coupons pages** — later phases (sidebar links render but routes may be placeholders).
+- **SEO metadata and OG images** — Phase 6.
+- **Homepage content** — Phase 6.
+- **RLS policy audit** — Phase 6.
+- **Beehiiv, Resend, Upstash** integrations — Phases 3 and 4A.
+- **Old Stripe Price archiving** — out of scope entirely unless explicitly added to a later phase.
+
+---
+
+## 6. Findings
+
+### WARN-1: `ebooks.file_path` is `NOT NULL` but PRD describes a two-step create-then-upload flow
+**Risk: MEDIUM | Architect must address in SPEC.md**
+
+The Phase 1 migration `supabase/migrations/20240101000003_products_ebooks.sql` defines:
+```sql
+file_path TEXT NOT NULL
+```
+
+The PRD specifies that on product create, an `ebooks` row is created with a `file_path` placeholder, and the actual PDF is uploaded separately in a second step (via R3 upload API). This means the `ebooks` row must be insertable before a file exists.
+
+**Recommended resolution**: Insert `file_path = ''` (empty string) as the placeholder value. This satisfies the NOT NULL constraint. The upload API (R3) then overwrites it with the actual storage path. The admin UI must clearly indicate when no file has been uploaded (e.g., "No PDF uploaded yet" status indicator).
+
+If the Architect prefers to add a new migration (`ALTER TABLE ebooks ALTER COLUMN file_path DROP NOT NULL`), that is a valid HOW choice — but it requires a new migration file and the Architect must include it. The empty string approach avoids a migration change.
+
+Either approach is acceptable. The Architect must document the chosen approach in SPEC.md.
+
+### WARN-2: Column naming discrepancy — `products.type` vs. `product_type` references in PRD
+**Risk: LOW | Advisory**
+
+PRD requirement R2 states "product_type: always 'ebook' for this form." The actual DB column is `products.type` (type `product_type` ENUM). `product_type` is the ENUM type name, not the column name.
+
+All application code must use `products.type`, not `products.product_type`. This naming ambiguity in the PRD has been resolved here — the Architect and Backend agents must use the correct column name.
+
+### WARN-3: `products.member_price_cents` must be read from DB after insert, not recomputed in application
+**Risk: LOW | Advisory**
+
+The DB trigger `compute_member_price` fires `BEFORE INSERT OR UPDATE OF price_cents ON public.products` and sets `member_price_cents = FLOOR(price_cents * 0.5)`. The Stripe sync (R4) requires `member_price_cents` to create the member-priced Stripe Price.
+
+Application code must read `products.member_price_cents` from the DB row after insert (using `RETURNING member_price_cents` or a follow-up SELECT) — not recompute it as `Math.floor(price_cents / 2)`. This ensures Stripe always reflects exactly what the DB contains, and decouples the application from the pricing formula.
+
+This applies to both product create and price update flows.
 
 ---
 

@@ -75,7 +75,7 @@ Full details in [supabase/auth-config.md](../../supabase/auth-config.md).
 ## Phase 3 — Payments and Membership
 
 ### E4 — Create Stripe account, get API keys (test mode)
-**Blocking:** Yes for Phase 3
+**Blocking:** Yes for Phase 3 — **Phase 2 is complete; E4 is needed before Phase 3 begins**
 
 1. Go to [dashboard.stripe.com](https://dashboard.stripe.com) → Developers → API Keys.
 2. Copy **Publishable key** → `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
@@ -87,7 +87,7 @@ Full details in [supabase/auth-config.md](../../supabase/auth-config.md).
 ---
 
 ### E5 — Create Stripe Products and Prices for membership
-**Blocking:** Yes for Phase 3
+**Blocking:** Yes for Phase 3 — **Phase 2 is complete; E5 is needed before Phase 3 begins**
 
 Create two products in Stripe Dashboard (or via API):
 

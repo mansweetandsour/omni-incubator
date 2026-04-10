@@ -1,1281 +1,693 @@
-# SPEC.md — Phase 1: Foundation
+# SPEC.md — Phase 2: Products & Library
 **Architect Agent Output**
 **Date:** 2026-04-09
-**Phase:** 1 — Foundation
+**Phase:** 2 — Products & Library
 
 ---
 
 ## 1. Overview
 
-This specification covers the complete technical foundation for the Omni Incubator platform. No application code exists yet — this is a greenfield Next.js 14 project. All decisions below are final and binding on downstream agents.
+This specification covers the admin product management system (e-books + services), the public library page, the e-book detail page, the marketplace page, and all supporting API routes and lib utilities. The project has a functioning Next.js 14 App Router skeleton with Supabase Auth, middleware, and shadcn/ui components from Phase 1. All decisions below are final and binding on downstream agents.
 
 ---
 
-## 2. Tech Stack (Confirmed)
+## 2. Tech Stack Additions
 
-| Layer | Technology | Version / Notes |
+| Concern | Decision | Rationale |
 |---|---|---|
-| Framework | Next.js 14 App Router | TypeScript, `src/` directory |
-| Styling | Tailwind CSS | v3, configured via `tailwind.config.ts` |
-| Component Library | shadcn/ui | Initialized with New York style, zinc base color |
-| Database | Supabase Postgres | Migrations via Supabase CLI |
-| Auth | Supabase Auth | Email OTP + Google OAuth |
-| Supabase SSR | `@supabase/ssr` | v0.5.x — cookie-based session management |
-| Error Monitoring | Sentry | `@sentry/nextjs`, graceful no-op when DSN absent |
-| Linting | ESLint | Default Next.js config |
+| Markdown rendering | `react-markdown` v9 + `remark-gfm` | Widely used, tree-shakeable. `dangerouslySetInnerHTML` rejected — XSS risk. |
+| Stripe SDK | Already installed (`stripe` v22 in package.json) | Server-only import. Never used in client components. |
+| Slug generation | Custom utility `src/lib/utils/slugify.ts` | No external dependency. 5-line function. |
+| File upload | Next.js built-in `request.formData()` | App Router Route Handlers support multipart natively. No multer/busboy. |
+| Search mechanism | ILIKE on title + description + tags text cast | Sufficient for Phase 2 scale. Full-text tsvector is Phase 6 work. |
+| Load-more pagination | Client-side fetch via `/api/library/products` Route Handler | Keeps `/library` as a pure Server Component for ISR. Client appends cards to local state. |
 
 ---
 
-## 3. Directory Structure
+## 3. Key Architecture Decisions
 
-All application source files live under `src/`. No `app/` or `pages/` at the project root.
+### 3.1 Admin Layout Route Group
 
-```
-omni-incubator/
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx                    # Root layout — nav, footer, providers
-│   │   ├── page.tsx                      # Homepage shell (empty, Phase 6 content)
-│   │   ├── globals.css                   # Tailwind directives + CSS variables
-│   │   ├── error.tsx                     # Root error boundary (Sentry integration)
-│   │   ├── not-found.tsx                 # 404 page
-│   │   ├── 403/
-│   │   │   └── page.tsx                  # 403 Forbidden page (admin access denied)
-│   │   ├── login/
-│   │   │   └── page.tsx                  # Email OTP + Google OAuth (client component)
-│   │   ├── profile/
-│   │   │   └── page.tsx                  # Profile view/edit (server + client)
-│   │   ├── library/
-│   │   │   └── page.tsx                  # Placeholder (Phase 2)
-│   │   ├── pricing/
-│   │   │   └── page.tsx                  # Placeholder (Phase 3)
-│   │   ├── marketplace/
-│   │   │   └── page.tsx                  # Placeholder (Phase 5)
-│   │   ├── sweepstakes/
-│   │   │   └── page.tsx                  # Placeholder (Phase 4A)
-│   │   ├── privacy/
-│   │   │   └── page.tsx                  # Placeholder (Phase 6)
-│   │   ├── terms/
-│   │   │   └── page.tsx                  # Placeholder (Phase 6)
-│   │   └── api/
-│   │       └── auth/
-│   │           └── callback/
-│   │               └── route.ts          # Google OAuth callback handler
-│   ├── components/
-│   │   ├── layout/
-│   │   │   ├── navbar.tsx                # Top navigation bar (server component)
-│   │   │   ├── navbar-auth.tsx           # Auth-conditional nav section (client component)
-│   │   │   ├── mobile-nav.tsx            # Hamburger + Sheet slide-out (client component)
-│   │   │   └── footer.tsx               # Site footer (server component)
-│   │   ├── profile/
-│   │   │   └── profile-form.tsx          # Profile edit form (client component)
-│   │   └── ui/                           # shadcn/ui auto-generated components
-│   ├── lib/
-│   │   └── supabase/
-│   │       ├── client.ts                 # Browser client
-│   │       ├── server.ts                 # Server client
-│   │       └── admin.ts                  # Service role client (never import in components)
-│   └── middleware.ts                     # Session refresh + route protection
-├── supabase/
-│   ├── migrations/
-│   │   ├── 20240101000001_enums.sql
-│   │   ├── 20240101000002_profiles.sql
-│   │   ├── 20240101000003_products_ebooks.sql
-│   │   ├── 20240101000004_services.sql
-│   │   ├── 20240101000005_orders_billing.sql
-│   │   ├── 20240101000006_sweepstakes_core.sql
-│   │   ├── 20240101000007_lead_captures_samples.sql
-│   │   ├── 20240101000008_email_stripe_tables.sql
-│   │   ├── 20240101000009_deferred_fks.sql
-│   │   ├── 20240101000010_functions_triggers.sql
-│   │   ├── 20240101000011_indexes.sql
-│   │   ├── 20240101000012_materialized_views.sql
-│   │   ├── 20240101000013_rls_policies.sql
-│   │   └── 20240101000014_seed_data.sql
-│   ├── storage.md                        # Bucket docs for operator
-│   └── auth-config.md                   # Auth config notes for operator
-├── sentry.client.config.ts
-├── sentry.server.config.ts
-├── sentry.edge.config.ts
-├── next.config.ts
-├── tailwind.config.ts
-├── tsconfig.json
-├── .env.local.example
-└── package.json
-```
+- Route group: `src/app/(admin)/`
+- Layout file: `src/app/(admin)/layout.tsx` — must NOT include public `<Navbar>` or `<Footer>`. Provides admin shell (sidebar + main content area) only.
+- The `(admin)` route group nests inside root `layout.tsx`. `<Providers>` and `<Toaster>` are already provided by root layout. Admin layout does NOT re-wrap in `<Providers>`.
+- Auth protection: exclusively handled by `src/middleware.ts` (Phase 1). The admin layout makes no role check.
+- Admin sidebar: `src/components/admin/admin-sidebar.tsx` — Server Component.
+
+### 3.2 `ebooks.file_path` NOT NULL — Decision: Empty String Placeholder
+
+**No new migration.** Insert `file_path = ''` on ebooks row create. The NOT NULL constraint is satisfied. The upload API overwrites it with the real storage path. Admin UI shows "No PDF uploaded" indicator when `file_path === ''`.
+
+### 3.3 Admin Forms: Server Actions
+
+All admin create/edit forms use **Next.js Server Actions**. File binary uploads use `POST /api/admin/ebooks/[id]/upload` Route Handler (streaming binary to a Server Action is impractical).
+
+### 3.4 Library Search and Pagination
+
+- `/library` page: Server Component, `revalidate = 60`. All filtering/sorting/searching is server-side via Postgres query.
+- Search: URL param `?q=`. ILIKE against `products.title`, `products.description`, and text cast of `ebooks.tags`.
+- "Load More": Client Component that fetches `/api/library/products?page=N&...` and appends to local state.
+- Search input: Client Component with 300ms debounce that updates URL via `router.push`.
+
+### 3.5 Stripe Lib Location
+
+`src/lib/stripe.ts` — exports the Stripe instance and two sync helpers. Server-only. Never import in client components.
+
+### 3.6 `member_price_cents` Read Rule
+
+After any INSERT or UPDATE on `products`, always use `.select('member_price_cents')` to retrieve the DB-computed value. Never compute `Math.floor(price_cents / 2)` in application code.
 
 ---
 
-## 4. Supabase Client Modules
+## 4. Data Models (No Schema Changes in Phase 2)
 
-### 4.1 `src/lib/supabase/client.ts` — Browser Client
+All tables were created in Phase 1. Phase 2 adds no migrations. Empty string placeholder for `ebooks.file_path` requires no schema change.
 
-```typescript
-import { createBrowserClient } from '@supabase/ssr'
+### `products` (relevant columns)
+`id UUID`, `slug TEXT UNIQUE NOT NULL`, `type product_type`, `title TEXT`, `description TEXT`, `long_description TEXT`, `price_cents INTEGER`, `member_price_cents INTEGER` (trigger-set — never write from app), `stripe_product_id TEXT`, `stripe_price_id TEXT`, `stripe_member_price_id TEXT`, `is_active BOOLEAN DEFAULT true`, `is_coming_soon BOOLEAN DEFAULT false`, `cover_image_url TEXT`, `custom_entry_amount INTEGER`, `created_at TIMESTAMPTZ`, `deleted_at TIMESTAMPTZ`
 
-export function createClient() {
-  return createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+### `ebooks` (relevant columns)
+`id UUID`, `product_id UUID FK→products.id`, `file_path TEXT NOT NULL` (empty string = no file), `preview_file_path TEXT`, `authors TEXT[] DEFAULT '{}'`, `category TEXT NOT NULL`, `subcategory TEXT`, `operator_dependency TEXT`, `scale_potential TEXT`, `cost_to_start TEXT`, `tags TEXT[] DEFAULT '{}'`
+
+### `services` (relevant columns)
+`id UUID`, `slug TEXT UNIQUE NOT NULL`, `title TEXT NOT NULL`, `description TEXT`, `long_description TEXT`, `rate_type service_rate_type NOT NULL`, `rate_cents INTEGER`, `rate_label TEXT`, `category TEXT NOT NULL`, `tags TEXT[]`, `status TEXT DEFAULT 'pending'`, `is_coming_soon BOOLEAN DEFAULT true`, `created_at TIMESTAMPTZ`, `deleted_at TIMESTAMPTZ`
+
+### `user_ebooks` (relevant columns)
+`user_id UUID FK→profiles.id`, `ebook_id UUID FK→ebooks.id`
+
+---
+
+## 5. API Contract
+
+### 5.1 `POST /api/admin/ebooks/[id]/upload`
+
+**Auth**: Admin-only. Steps:
+1. `createClient()` (cookie-based) → `getUser()` → 401 if no user
+2. `supabase.from('profiles').select('role').eq('id', user.id).single()` → 403 if `role !== 'admin'`
+3. All storage ops use `adminClient`
+
+**Path param**: `[id]` = `products.id` UUID
+
+**Request**: `multipart/form-data`
+- `file`: binary
+- `type`: `'main'` | `'preview'` | `'cover'`
+
+**Validation**:
+- `file.size > 104_857_600` → 413 `{ error: 'File too large. Max 100MB.' }`
+- `type=main|preview` requires MIME `application/pdf` → else 415
+- `type=cover` requires MIME `image/jpeg` | `image/png` | `image/webp` → else 415
+
+**Routing**:
+
+| type | bucket | path pattern | DB write |
+|---|---|---|---|
+| `main` | `ebooks` (private) | `ebooks/{product-uuid}/{filename}.pdf` | `ebooks.file_path = storagePath` WHERE `product_id = id` |
+| `preview` | `ebook-previews` (public) | `ebook-previews/{product-uuid}/preview-{filename}.pdf` | `ebooks.preview_file_path = storagePath` WHERE `product_id = id` |
+| `cover` | `covers` (public) | `covers/{product-uuid}/cover-{filename}.{ext}` | `products.cover_image_url = fullPublicUrl` WHERE `id = productId` |
+
+For `cover`: get public URL via `adminClient.storage.from('covers').getPublicUrl(path).data.publicUrl` — store full URL.
+
+**Success response**: `200 { path: string, url?: string }` — `url` present only for `cover` type.
+
+---
+
+### 5.2 `GET /api/ebooks/[id]/preview`
+
+**Auth**: None — public route.
+
+**Path param**: `[id]` = `products.id` UUID.
+
+**Logic**:
+1. `adminClient.from('ebooks').select('preview_file_path').eq('product_id', id).maybeSingle()` → 404 if no row
+2. `preview_file_path` null or `''` → `404 { error: 'No preview available' }`
+3. `const { data } = adminClient.storage.from('ebook-previews').getPublicUrl(preview_file_path)`
+4. `NextResponse.redirect(data.publicUrl)` — 307 redirect to CDN URL
+
+Response headers on redirect: `Content-Type: application/pdf`, `Content-Disposition: inline`
+
+---
+
+### 5.3 `GET /api/library/products`
+
+**Auth**: None — public.
+
+**Query params**:
+- `page` (integer, default `1`)
+- `q` (string, optional)
+- `category` (comma-separated, optional) — values: `conceptual`, `skill`, `industry`, `startup_guide`
+- `operator_dependency` (comma-separated, optional)
+- `scale_potential` (comma-separated, optional)
+- `cost_to_start` (comma-separated, optional)
+- `sort` (`newest` | `price_asc` | `price_desc` | `title_asc`, default `newest`)
+
+**Page size**: 12
+
+**Response**:
+```json
+{
+  "products": ProductCard[],
+  "hasMore": boolean,
+  "total": number
 }
 ```
 
-- Named export: `createClient` (function, not singleton — safe to call per render in client components)
-- TypeScript: `Database` type import from `@/types/supabase` — use `any` placeholder until Phase 2 generates types
-
-### 4.2 `src/lib/supabase/server.ts` — Server Client
-
+**ProductCard shape**:
 ```typescript
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-
-export async function createClient() {
-  const cookieStore = await cookies()
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {
-            // setAll called from Server Component — cookies() is read-only
-            // Session refresh handled by middleware
-          }
-        },
-      },
-    }
-  )
-}
-```
-
-- `async` function — `cookies()` is async in Next.js 14+
-- Used in: Server Components, Server Actions, Route Handlers
-
-### 4.3 `src/lib/supabase/admin.ts` — Service Role Client
-
-```typescript
-import { createClient } from '@supabase/supabase-js'
-
-// WARNING: This client bypasses RLS. Never import in components or browser code.
-// Use only in: webhook handlers, admin API routes, server-only operations.
-export const adminClient = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
+{
+  id: string
+  slug: string
+  title: string
+  description: string | null
+  price_cents: number
+  cover_image_url: string | null
+  ebook: {
+    id: string
+    authors: string[]
+    category: string
   }
-)
-```
-
-- Singleton export (server-only module, never bundled client-side)
-
----
-
-## 5. Database Migrations
-
-### Migration File Plan (14 files, in dependency order)
-
-**File 1: `20240101000001_enums.sql`**
-Creates all ENUM types before any table references them:
-```sql
-CREATE TYPE product_type AS ENUM ('ebook', 'membership_monthly', 'membership_annual', 'service');
-CREATE TYPE service_rate_type AS ENUM ('hourly', 'fixed', 'monthly', 'custom');
-CREATE TYPE order_status AS ENUM ('pending', 'completed', 'failed');
-CREATE TYPE coupon_entry_type AS ENUM ('multiplier', 'fixed_bonus');
-CREATE TYPE entry_source AS ENUM ('purchase', 'non_purchase_capture', 'admin_adjustment', 'coupon_bonus');
-```
-
-**File 2: `20240101000002_profiles.sql`**
-```sql
-CREATE TABLE public.profiles (
-  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  email TEXT NOT NULL,
-  phone TEXT,
-  display_name TEXT,
-  username TEXT UNIQUE,
-  avatar_url TEXT,
-  bio TEXT,
-  website TEXT,
-  role TEXT NOT NULL DEFAULT 'user',
-  stripe_customer_id TEXT UNIQUE,
-  profile_complete BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  deleted_at TIMESTAMPTZ
-);
-```
-
-**File 3: `20240101000003_products_ebooks.sql`**
-```sql
-CREATE TABLE public.products (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  slug TEXT UNIQUE NOT NULL,
-  type product_type NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  long_description TEXT,
-  price_cents INTEGER NOT NULL,
-  member_price_cents INTEGER,
-  stripe_product_id TEXT,
-  stripe_price_id TEXT,
-  stripe_member_price_id TEXT,
-  is_active BOOLEAN DEFAULT true,
-  is_coming_soon BOOLEAN DEFAULT false,
-  cover_image_url TEXT,
-  sort_order INTEGER DEFAULT 0,
-  metadata JSONB DEFAULT '{}',
-  custom_entry_amount INTEGER,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  deleted_at TIMESTAMPTZ
-);
-
-CREATE TABLE public.ebooks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
-  file_path TEXT NOT NULL,
-  file_size_bytes BIGINT,
-  page_count INTEGER,
-  format TEXT DEFAULT 'pdf',
-  preview_file_path TEXT,
-  authors TEXT[] DEFAULT '{}',
-  isbn TEXT,
-  category TEXT NOT NULL,
-  subcategory TEXT,
-  operator_dependency TEXT,
-  scale_potential TEXT,
-  cost_to_start TEXT,
-  tags TEXT[] DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-```
-
-**File 4: `20240101000004_services.sql`**
-```sql
-CREATE TABLE public.services (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  product_id UUID REFERENCES public.products(id) ON DELETE SET NULL,
-  provider_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
-  slug TEXT UNIQUE NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  long_description TEXT,
-  rate_type service_rate_type NOT NULL,
-  rate_cents INTEGER,
-  rate_label TEXT,
-  category TEXT NOT NULL,
-  tags TEXT[] DEFAULT '{}',
-  status TEXT DEFAULT 'pending',
-  is_coming_soon BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  deleted_at TIMESTAMPTZ
-);
-```
-
-**File 5: `20240101000005_orders_billing.sql`**
-```sql
--- Note: orders.coupon_id FK is deferred (coupons table not yet created)
-CREATE TABLE public.orders (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_number TEXT UNIQUE NOT NULL DEFAULT '',
-  user_id UUID NOT NULL REFERENCES public.profiles(id),
-  stripe_checkout_session_id TEXT,
-  stripe_payment_intent_id TEXT,
-  stripe_invoice_id TEXT,
-  coupon_id UUID,  -- FK added in 20240101000009_deferred_fks.sql
-  coupon_code TEXT,
-  stripe_promotion_code TEXT,
-  status order_status DEFAULT 'pending',
-  subtotal_cents INTEGER NOT NULL,
-  discount_cents INTEGER DEFAULT 0,
-  total_cents INTEGER NOT NULL,
-  is_member_discount BOOLEAN DEFAULT false,
-  is_subscription_renewal BOOLEAN DEFAULT false,
-  entries_awarded_by_checkout BOOLEAN DEFAULT false,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE public.order_items (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
-  product_id UUID NOT NULL REFERENCES public.products(id),
-  product_type product_type NOT NULL,
-  product_title TEXT NOT NULL,
-  quantity INTEGER DEFAULT 1,
-  unit_price_cents INTEGER NOT NULL,
-  list_price_cents INTEGER NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE public.subscriptions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  stripe_subscription_id TEXT UNIQUE NOT NULL,
-  stripe_customer_id TEXT NOT NULL,
-  product_id UUID NOT NULL REFERENCES public.products(id),
-  status TEXT NOT NULL,
-  trial_start TIMESTAMPTZ,
-  trial_end TIMESTAMPTZ,
-  current_period_start TIMESTAMPTZ,
-  current_period_end TIMESTAMPTZ,
-  cancel_at_period_end BOOLEAN DEFAULT false,
-  canceled_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE UNIQUE INDEX idx_subscriptions_active_user
-  ON public.subscriptions(user_id)
-  WHERE status IN ('trialing', 'active');
-
-CREATE TABLE public.user_ebooks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  ebook_id UUID NOT NULL REFERENCES public.ebooks(id),
-  order_id UUID REFERENCES public.orders(id),
-  download_count INTEGER DEFAULT 0,
-  last_downloaded_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-```
-
-**File 6: `20240101000006_sweepstakes_core.sql`**
-```sql
-CREATE TABLE public.sweepstakes (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  title TEXT NOT NULL,
-  description TEXT,
-  prize_amount_cents INTEGER,
-  prize_description TEXT,
-  start_at TIMESTAMPTZ NOT NULL,
-  end_at TIMESTAMPTZ NOT NULL,
-  status TEXT DEFAULT 'draft',
-  winner_user_id UUID REFERENCES public.profiles(id),
-  winner_drawn_at TIMESTAMPTZ,
-  non_purchase_entry_amount INTEGER DEFAULT 1,
-  official_rules_url TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE UNIQUE INDEX idx_sweepstakes_single_active
-  ON public.sweepstakes((true))
-  WHERE status = 'active';
-
-CREATE TABLE public.entry_multipliers (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  sweepstake_id UUID NOT NULL REFERENCES public.sweepstakes(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
-  description TEXT,
-  multiplier NUMERIC(5,2) NOT NULL CHECK (multiplier > 0),
-  start_at TIMESTAMPTZ NOT NULL,
-  end_at TIMESTAMPTZ NOT NULL,
-  is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT multiplier_valid_range CHECK (end_at > start_at)
-);
-
-CREATE TABLE public.coupons (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  code TEXT UNIQUE NOT NULL,
-  name TEXT,
-  entry_type coupon_entry_type NOT NULL,
-  entry_value NUMERIC(10,2) NOT NULL,
-  max_uses_global INTEGER,
-  max_uses_per_user INTEGER DEFAULT 1,
-  current_uses INTEGER DEFAULT 0,
-  expires_at TIMESTAMPTZ,
-  sweepstake_id UUID REFERENCES public.sweepstakes(id),
-  is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE public.coupon_uses (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  coupon_id UUID NOT NULL REFERENCES public.coupons(id) ON DELETE CASCADE,
-  user_id UUID NOT NULL REFERENCES public.profiles(id),
-  order_id UUID REFERENCES public.orders(id),
-  created_at TIMESTAMPTZ DEFAULT now(),
-  UNIQUE(coupon_id, user_id, order_id)
-);
-
-CREATE TABLE public.sweepstake_entries (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  sweepstake_id UUID NOT NULL REFERENCES public.sweepstakes(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-  lead_capture_id UUID,  -- FK added in deferred_fks.sql
-  source entry_source NOT NULL,
-  order_id UUID REFERENCES public.orders(id),
-  order_item_id UUID REFERENCES public.order_items(id),
-  product_id UUID REFERENCES public.products(id),
-  base_entries INTEGER NOT NULL,
-  multiplier NUMERIC(5,2) DEFAULT 1.0,
-  coupon_multiplier NUMERIC(5,2) DEFAULT 1.0,
-  coupon_id UUID REFERENCES public.coupons(id),
-  bonus_entries INTEGER DEFAULT 0,
-  total_entries INTEGER NOT NULL,
-  list_price_cents INTEGER DEFAULT 0,
-  amount_cents INTEGER DEFAULT 0,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT unique_purchase_entry UNIQUE (order_item_id, sweepstake_id)
-);
-```
-
-**File 7: `20240101000007_lead_captures_samples.sql`**
-```sql
--- lead_captures.sample_product_id FK is deferred (sample_products not yet created)
-CREATE TABLE public.lead_captures (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  email TEXT,
-  phone TEXT,
-  ip_address INET,
-  user_id UUID REFERENCES public.profiles(id),
-  source TEXT DEFAULT 'popup',
-  sample_product_id UUID,  -- FK added in deferred_fks.sql
-  sweepstake_id UUID REFERENCES public.sweepstakes(id),
-  confirmation_token TEXT UNIQUE,
-  confirmation_sent_at TIMESTAMPTZ,
-  confirmed_at TIMESTAMPTZ,
-  entry_awarded BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  CONSTRAINT unique_email_per_sweep UNIQUE (email, sweepstake_id),
-  CONSTRAINT contact_required CHECK (email IS NOT NULL OR phone IS NOT NULL)
-);
-
-CREATE TABLE public.sample_products (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  slug TEXT UNIQUE NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  long_description TEXT,
-  cover_image_url TEXT,
-  file_path TEXT NOT NULL,
-  file_size_bytes BIGINT,
-  require_email BOOLEAN DEFAULT true,
-  require_phone BOOLEAN DEFAULT false,
-  upsell_product_id UUID REFERENCES public.products(id),
-  upsell_membership BOOLEAN DEFAULT true,
-  upsell_heading TEXT,
-  upsell_body TEXT,
-  custom_entry_amount INTEGER,
-  is_active BOOLEAN DEFAULT true,
-  created_at TIMESTAMPTZ DEFAULT now(),
-  updated_at TIMESTAMPTZ DEFAULT now()
-);
-```
-
-**File 8: `20240101000008_email_stripe_tables.sql`**
-```sql
-CREATE TABLE public.email_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES public.profiles(id),
-  to_email TEXT NOT NULL,
-  template TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  resend_id TEXT,
-  status TEXT DEFAULT 'sent',
-  metadata JSONB DEFAULT '{}',
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE public.processed_stripe_events (
-  event_id TEXT PRIMARY KEY,
-  event_type TEXT NOT NULL,
-  processed_at TIMESTAMPTZ DEFAULT now()
-);
-```
-
-**File 9: `20240101000009_deferred_fks.sql`**
-Adds the three circular/deferred foreign key constraints after all tables exist:
-```sql
-ALTER TABLE public.orders
-  ADD CONSTRAINT fk_orders_coupon
-  FOREIGN KEY (coupon_id) REFERENCES public.coupons(id);
-
-ALTER TABLE public.sweepstake_entries
-  ADD CONSTRAINT fk_entries_lead_capture
-  FOREIGN KEY (lead_capture_id) REFERENCES public.lead_captures(id);
-
-ALTER TABLE public.lead_captures
-  ADD CONSTRAINT fk_lead_captures_sample_product
-  FOREIGN KEY (sample_product_id) REFERENCES public.sample_products(id);
-```
-
-**File 10: `20240101000010_functions_triggers.sql`**
-All functions and triggers. Created AFTER all tables (including `lead_captures`) exist — resolves WARN-4.
-
-```sql
--- ============================================================
--- set_updated_at: applied to all tables with updated_at
--- ============================================================
-CREATE OR REPLACE FUNCTION public.set_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DO $$
-DECLARE
-  tbl TEXT;
-BEGIN
-  FOR tbl IN
-    SELECT table_name FROM information_schema.columns
-    WHERE table_schema = 'public' AND column_name = 'updated_at'
-  LOOP
-    EXECUTE format(
-      'CREATE TRIGGER trg_set_updated_at BEFORE UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.set_updated_at()',
-      tbl
-    );
-  END LOOP;
-END;
-$$;
-
--- ============================================================
--- compute_member_price: BEFORE INSERT OR UPDATE OF price_cents
--- ============================================================
-CREATE OR REPLACE FUNCTION public.compute_member_price()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF NEW.type = 'ebook' THEN
-    NEW.member_price_cents := FLOOR(NEW.price_cents * 0.5);
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER set_member_price
-  BEFORE INSERT OR UPDATE OF price_cents ON public.products
-  FOR EACH ROW EXECUTE FUNCTION public.compute_member_price();
-
--- ============================================================
--- generate_order_number: BEFORE INSERT on orders
--- ============================================================
-CREATE OR REPLACE FUNCTION public.generate_order_number()
-RETURNS TRIGGER AS $$
-DECLARE
-  suffix TEXT;
-BEGIN
-  suffix := UPPER(SUBSTRING(MD5(gen_random_uuid()::text), 1, 8));
-  NEW.order_number := 'OMNI-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-' || suffix;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER set_order_number
-  BEFORE INSERT ON public.orders
-  FOR EACH ROW
-  WHEN (NEW.order_number IS NULL OR NEW.order_number = '')
-  EXECUTE FUNCTION public.generate_order_number();
-
--- ============================================================
--- handle_new_user: AFTER INSERT on auth.users
--- Created last — references lead_captures which now exists
--- ============================================================
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, display_name, username)
-  VALUES (
-    NEW.id,
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1)),
-    LOWER(REGEXP_REPLACE(
-      COALESCE(NEW.raw_user_meta_data->>'full_name', SPLIT_PART(NEW.email, '@', 1)),
-      '[^a-zA-Z0-9]', '', 'g'
-    )) || '-' || SUBSTRING(gen_random_uuid()::text, 1, 4)
-  );
-
-  -- Link any pre-existing lead captures by email
-  UPDATE public.lead_captures
-  SET user_id = NEW.id
-  WHERE LOWER(email) = LOWER(NEW.email) AND user_id IS NULL;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-```
-
-**File 11: `20240101000011_indexes.sql`**
-```sql
--- Products
-CREATE INDEX idx_products_type ON public.products(type) WHERE deleted_at IS NULL;
-CREATE INDEX idx_products_slug ON public.products(slug);
-CREATE INDEX idx_products_active ON public.products(is_active, type) WHERE deleted_at IS NULL;
-
--- E-books
-CREATE INDEX idx_ebooks_category ON public.ebooks(category);
-CREATE INDEX idx_ebooks_product ON public.ebooks(product_id);
-
--- Orders
-CREATE INDEX idx_orders_user ON public.orders(user_id);
-CREATE INDEX idx_orders_status ON public.orders(status);
-CREATE INDEX idx_orders_number ON public.orders(order_number);
-CREATE INDEX idx_orders_stripe_session ON public.orders(stripe_checkout_session_id);
-CREATE INDEX idx_orders_stripe_invoice ON public.orders(stripe_invoice_id);
-CREATE INDEX idx_orders_created ON public.orders(created_at);
-
--- Subscriptions
-CREATE INDEX idx_subscriptions_user ON public.subscriptions(user_id);
-CREATE INDEX idx_subscriptions_status ON public.subscriptions(status);
-CREATE INDEX idx_subscriptions_stripe ON public.subscriptions(stripe_subscription_id);
-
--- Sweepstake entries
-CREATE INDEX idx_entries_user_sweep ON public.sweepstake_entries(user_id, sweepstake_id);
-CREATE INDEX idx_entries_order ON public.sweepstake_entries(order_id);
-CREATE INDEX idx_entries_sweep_source ON public.sweepstake_entries(sweepstake_id, source);
-
--- Lead captures
-CREATE INDEX idx_lead_captures_email ON public.lead_captures(email);
-CREATE INDEX idx_lead_captures_phone ON public.lead_captures(phone);
-CREATE INDEX idx_lead_captures_token ON public.lead_captures(confirmation_token);
-CREATE INDEX idx_lead_captures_unconfirmed ON public.lead_captures(confirmation_sent_at)
-  WHERE confirmed_at IS NULL AND entry_awarded = false;
-
--- Sample products
-CREATE INDEX idx_sample_products_slug ON public.sample_products(slug);
-CREATE INDEX idx_sample_products_active ON public.sample_products(is_active);
-
--- Coupons
-CREATE INDEX idx_coupons_code ON public.coupons(UPPER(code));
-
--- Entry multipliers
-CREATE INDEX idx_multipliers_sweep_time ON public.entry_multipliers(sweepstake_id, start_at, end_at)
-  WHERE is_active = true;
-```
-
-**File 12: `20240101000012_materialized_views.sql`**
-```sql
-CREATE MATERIALIZED VIEW public.entry_verification AS
-WITH order_totals AS (
-  SELECT
-    o.user_id,
-    sw.id AS sweepstake_id,
-    COALESCE(SUM(oi.unit_price_cents * oi.quantity), 0) AS actual_order_total
-  FROM public.orders o
-  JOIN public.order_items oi ON oi.order_id = o.id
-  JOIN public.sweepstakes sw ON o.created_at BETWEEN sw.start_at AND sw.end_at
-  WHERE o.status = 'completed'
-  GROUP BY o.user_id, sw.id
-)
-SELECT
-  se.user_id,
-  se.sweepstake_id,
-  SUM(se.total_entries) AS total_entries,
-  SUM(se.total_entries) FILTER (WHERE se.source = 'purchase') AS purchase_entries,
-  SUM(se.total_entries) FILTER (WHERE se.source = 'non_purchase_capture') AS non_purchase_entries,
-  SUM(se.total_entries) FILTER (WHERE se.source = 'admin_adjustment') AS admin_entries,
-  SUM(se.total_entries) FILTER (WHERE se.source = 'coupon_bonus') AS coupon_bonus_entries,
-  SUM(se.list_price_cents) FILTER (WHERE se.source = 'purchase') AS entries_list_price_basis,
-  SUM(se.amount_cents) FILTER (WHERE se.source = 'purchase') AS entries_amount_collected,
-  COALESCE(ot.actual_order_total, 0) AS actual_order_total
-FROM public.sweepstake_entries se
-LEFT JOIN order_totals ot ON ot.user_id = se.user_id AND ot.sweepstake_id = se.sweepstake_id
-GROUP BY se.user_id, se.sweepstake_id, ot.actual_order_total;
-
-CREATE UNIQUE INDEX idx_entry_verification_pk
-  ON public.entry_verification(user_id, sweepstake_id);
-```
-
-**File 13: `20240101000013_rls_policies.sql`**
-
-Full RLS implementation. See Section 6 below for the complete SQL.
-
-**File 14: `20240101000014_seed_data.sql`**
-```sql
-INSERT INTO public.products (slug, type, title, description, price_cents, is_active) VALUES
-  (
-    'omni-membership-monthly',
-    'membership_monthly',
-    'Omni Membership — Monthly',
-    'Full access to the Omni Incubator ecosystem. Includes 50% off all e-books, monthly newsletter, sweepstake entries on every dollar spent, and early access to the service marketplace.',
-    1500,
-    true
-  ),
-  (
-    'omni-membership-annual',
-    'membership_annual',
-    'Omni Membership — Annual',
-    'Full access to the Omni Incubator ecosystem. Includes 50% off all e-books, monthly newsletter, sweepstake entries on every dollar spent, and early access to the service marketplace. Save $51/year vs monthly.',
-    12900,
-    true
-  );
+}
 ```
 
 ---
 
-## 6. RLS Policies (Complete SQL for Migration File 13)
+## 6. File and Folder Structure
 
-**Design decisions:**
-- Admin check pattern: `(SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin'` (correlated subquery, safe)
-- `processed_stripe_events`: RLS enabled, zero permissive policies — only service role client (bypasses RLS) can access (resolves WARN-2)
-- Profiles UPDATE policy uses `WITH CHECK` to prevent role column self-escalation
+Files to create or replace in Phase 2:
 
-```sql
--- ============================================================
--- PROFILES
--- ============================================================
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "profiles_select_own"
-  ON public.profiles FOR SELECT
-  USING (auth.uid() = id);
-
-CREATE POLICY "profiles_update_own"
-  ON public.profiles FOR UPDATE
-  USING (auth.uid() = id)
-  WITH CHECK (
-    auth.uid() = id
-    AND role = (SELECT role FROM public.profiles WHERE id = auth.uid())
-  );
-
-CREATE POLICY "profiles_admin_select"
-  ON public.profiles FOR SELECT
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
-CREATE POLICY "profiles_admin_update"
-  ON public.profiles FOR UPDATE
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- PRODUCTS
--- ============================================================
-ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "products_select_public"
-  ON public.products FOR SELECT
-  USING (is_active = true AND deleted_at IS NULL);
-
-CREATE POLICY "products_admin_all"
-  ON public.products FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- EBOOKS
--- ============================================================
-ALTER TABLE public.ebooks ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "ebooks_select_public"
-  ON public.ebooks FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.products p
-      WHERE p.id = ebooks.product_id
-        AND p.is_active = true
-        AND p.deleted_at IS NULL
-    )
-  );
-
-CREATE POLICY "ebooks_admin_all"
-  ON public.ebooks FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- SERVICES
--- ============================================================
-ALTER TABLE public.services ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "services_select_public"
-  ON public.services FOR SELECT
-  USING (status IN ('active', 'approved') OR is_coming_soon = true);
-
-CREATE POLICY "services_admin_all"
-  ON public.services FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- SAMPLE_PRODUCTS
--- ============================================================
-ALTER TABLE public.sample_products ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "sample_products_select_public"
-  ON public.sample_products FOR SELECT
-  USING (is_active = true);
-
-CREATE POLICY "sample_products_admin_all"
-  ON public.sample_products FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- ORDERS
--- ============================================================
-ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "orders_select_own"
-  ON public.orders FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "orders_admin_all"
-  ON public.orders FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- ORDER_ITEMS
--- ============================================================
-ALTER TABLE public.order_items ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "order_items_select_own"
-  ON public.order_items FOR SELECT
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.orders o
-      WHERE o.id = order_items.order_id
-        AND o.user_id = auth.uid()
-    )
-  );
-
-CREATE POLICY "order_items_admin_all"
-  ON public.order_items FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- SUBSCRIPTIONS
--- ============================================================
-ALTER TABLE public.subscriptions ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "subscriptions_select_own"
-  ON public.subscriptions FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "subscriptions_admin_all"
-  ON public.subscriptions FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- USER_EBOOKS
--- ============================================================
-ALTER TABLE public.user_ebooks ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "user_ebooks_select_own"
-  ON public.user_ebooks FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "user_ebooks_admin_all"
-  ON public.user_ebooks FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- SWEEPSTAKES
--- ============================================================
-ALTER TABLE public.sweepstakes ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "sweepstakes_select_public"
-  ON public.sweepstakes FOR SELECT
-  USING (status IN ('active', 'ended', 'drawn'));
-
-CREATE POLICY "sweepstakes_admin_all"
-  ON public.sweepstakes FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- SWEEPSTAKE_ENTRIES
--- ============================================================
-ALTER TABLE public.sweepstake_entries ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "sweepstake_entries_select_own"
-  ON public.sweepstake_entries FOR SELECT
-  USING (auth.uid() = user_id);
-
-CREATE POLICY "sweepstake_entries_admin_all"
-  ON public.sweepstake_entries FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- ENTRY_MULTIPLIERS
--- ============================================================
-ALTER TABLE public.entry_multipliers ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "entry_multipliers_select_public"
-  ON public.entry_multipliers FOR SELECT
-  USING (is_active = true);
-
-CREATE POLICY "entry_multipliers_admin_all"
-  ON public.entry_multipliers FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- LEAD_CAPTURES — admin only (no public or user access)
--- ============================================================
-ALTER TABLE public.lead_captures ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "lead_captures_admin_all"
-  ON public.lead_captures FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- COUPONS — admin only (validated server-side via service role)
--- ============================================================
-ALTER TABLE public.coupons ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "coupons_admin_all"
-  ON public.coupons FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- COUPON_USES — admin only
--- ============================================================
-ALTER TABLE public.coupon_uses ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "coupon_uses_admin_all"
-  ON public.coupon_uses FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- EMAIL_LOG — admin only
--- ============================================================
-ALTER TABLE public.email_log ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "email_log_admin_all"
-  ON public.email_log FOR ALL
-  USING ((SELECT role FROM public.profiles WHERE id = auth.uid()) = 'admin');
-
--- ============================================================
--- PROCESSED_STRIPE_EVENTS — no policies (service role only)
--- WARN-2 resolution: RLS enabled, zero permissive policies.
--- Only the adminClient (service_role key, bypasses RLS) can access.
--- ============================================================
-ALTER TABLE public.processed_stripe_events ENABLE ROW LEVEL SECURITY;
--- No CREATE POLICY statements — intentionally locked down.
+```
+src/
+├── app/
+│   ├── (admin)/
+│   │   ├── layout.tsx                              # Admin shell (sidebar + main)
+│   │   └── admin/
+│   │       ├── page.tsx                            # Redirect to /admin/products
+│   │       ├── products/
+│   │       │   ├── page.tsx                        # Product list (Server Component)
+│   │       │   ├── new/
+│   │       │   │   └── page.tsx                    # Create product form page
+│   │       │   └── [id]/
+│   │       │       └── edit/
+│   │       │           └── page.tsx                # Edit product form page
+│   │       ├── services/
+│   │       │   ├── page.tsx                        # Service list (Server Component)
+│   │       │   ├── new/
+│   │       │   │   └── page.tsx                    # Create service form page
+│   │       │   └── [id]/
+│   │       │       └── edit/
+│   │       │           └── page.tsx                # Edit service form page
+│   │       ├── ebooks/
+│   │       │   └── page.tsx                        # Placeholder
+│   │       ├── sample-products/
+│   │       │   └── page.tsx                        # Placeholder
+│   │       ├── orders/
+│   │       │   └── page.tsx                        # Placeholder
+│   │       ├── users/
+│   │       │   └── page.tsx                        # Placeholder
+│   │       ├── sweepstakes/
+│   │       │   └── page.tsx                        # Placeholder
+│   │       ├── coupons/
+│   │       │   └── page.tsx                        # Placeholder
+│   │       └── settings/
+│   │           └── page.tsx                        # Placeholder
+│   ├── actions/
+│   │   ├── products.ts                             # Server Actions: createProduct, updateProduct, archiveProduct
+│   │   └── services.ts                             # Server Actions: createService, updateService, archiveService
+│   ├── api/
+│   │   ├── admin/
+│   │   │   └── ebooks/
+│   │   │       └── [id]/
+│   │   │           └── upload/
+│   │   │               └── route.ts                # POST /api/admin/ebooks/[id]/upload
+│   │   ├── ebooks/
+│   │   │   └── [id]/
+│   │   │       └── preview/
+│   │   │           └── route.ts                    # GET /api/ebooks/[id]/preview
+│   │   └── library/
+│   │       └── products/
+│   │           └── route.ts                        # GET /api/library/products
+│   ├── library/
+│   │   ├── page.tsx                                # REPLACE placeholder — library listing
+│   │   └── [slug]/
+│   │       └── page.tsx                            # E-book detail page
+│   └── marketplace/
+│       └── page.tsx                                # REPLACE placeholder — marketplace
+├── components/
+│   ├── admin/
+│   │   ├── admin-sidebar.tsx                       # Sidebar nav (Server Component)
+│   │   ├── product-form.tsx                        # Create/edit ebook form (Client Component)
+│   │   ├── product-table.tsx                       # Product list table (Client Component)
+│   │   ├── service-form.tsx                        # Create/edit service form (Client Component)
+│   │   ├── service-table.tsx                       # Service list table (Client Component)
+│   │   └── file-upload-section.tsx                 # File upload UI (Client Component)
+│   ├── library/
+│   │   ├── product-card.tsx                        # Product card (Server Component)
+│   │   ├── filter-sidebar.tsx                      # Filter checkboxes (Client Component)
+│   │   ├── search-input.tsx                        # Debounced search (Client Component)
+│   │   ├── sort-select.tsx                         # Sort dropdown (Client Component)
+│   │   └── load-more-button.tsx                    # Load more (Client Component)
+│   └── ebook/
+│       ├── ebook-detail.tsx                        # Detail content with upsell toggle (Client Component)
+│       └── preview-download-button.tsx             # Preview download CTA (Client Component)
+└── lib/
+    ├── stripe.ts                                   # Stripe instance + sync helpers (server-only)
+    └── utils/
+        └── slugify.ts                              # Slug generation utility
 ```
 
 ---
 
-## 7. Auth Middleware (`src/middleware.ts`)
+## 7. Server Actions Contract
 
-**Pattern:** Use `@supabase/ssr` `createServerClient` with cookie read/write. Session refresh happens on every request via the middleware. Do not import `server.ts` here — create a new client inline to avoid the `cookies()` read-only limitation.
+All Server Actions live at `src/app/actions/` with `'use server'` directive at the top of each file.
+
+All actions perform auth check first:
+1. `createClient()` → `getUser()` → return `{ error: 'Unauthorized' }` if no user
+2. `supabase.from('profiles').select('role').eq('id', user.id).single()` → return `{ error: 'Forbidden' }` if `role !== 'admin'`
+
+### `src/app/actions/products.ts`
+
+**`createProduct(formData: FormData): Promise<{ id: string; slug: string } | { error: string }>`**
+1. Extract and validate all required fields
+2. Generate slug: `slugify(title)` → uniqueness check → append `-${uuid.slice(0,6)}` if conflict
+3. `supabase.from('products').insert({ type: 'ebook', title, description, long_description, price_cents, is_active, is_coming_soon, custom_entry_amount, slug }).select('id, slug, member_price_cents').single()`
+4. `supabase.from('ebooks').insert({ product_id: product.id, file_path: '', category, subcategory, authors: [], operator_dependency, scale_potential, cost_to_start, tags })`
+5. `syncStripeProduct(product.id)` — fire-and-forget (wrap in `.catch(console.error)`, do not await)
+6. Return `{ id: product.id, slug: product.slug }`
+
+**`updateProduct(id: string, formData: FormData): Promise<{ ok: true; priceChanged: boolean } | { error: string }>`**
+1. Validate fields
+2. Read current `price_cents` from DB to detect change
+3. `supabase.from('products').update({ title, description, long_description, price_cents, is_active, is_coming_soon, custom_entry_amount }).eq('id', id).select('member_price_cents').single()`
+4. `supabase.from('ebooks').update({ category, subcategory, operator_dependency, scale_potential, cost_to_start, tags }).eq('product_id', id)`
+5. If `price_cents` changed: `syncStripeNewPrices(id, member_price_cents)` — fire-and-forget
+6. Return `{ ok: true, priceChanged: boolean }`
+
+**`archiveProduct(id: string): Promise<{ ok: true } | { error: string }>`**
+`supabase.from('products').update({ deleted_at: new Date().toISOString() }).eq('id', id)`
+
+### `src/app/actions/services.ts`
+
+**`createService(formData: FormData): Promise<{ id: string; slug: string } | { error: string }>`**
+1. Validate required fields (title, rate_type, category)
+2. Validate: `rate_cents` must be null when `rate_type === 'custom'`; must be positive integer otherwise
+3. Generate slug via same slugify + uniqueness logic (against `services` table)
+4. `supabase.from('services').insert({ title, description, long_description, slug, rate_type, rate_cents, rate_label, category, tags, status: 'pending', is_coming_soon: true }).select('id, slug').single()`
+5. Return `{ id, slug }`
+
+**`updateService(id: string, formData: FormData): Promise<{ ok: true } | { error: string }>`**
+Update all fields. `slug` is read-only — not updated.
+
+**`archiveService(id: string): Promise<{ ok: true } | { error: string }>`**
+`supabase.from('services').update({ deleted_at: new Date().toISOString() }).eq('id', id)`
+
+---
+
+## 8. Stripe Sync — `src/lib/stripe.ts`
 
 ```typescript
-// src/middleware.ts
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+// server-only — do not import in client components
+import Stripe from 'stripe'
+import { adminClient } from './supabase/admin'
 
-export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+  apiVersion: '2024-06-20',
+  typescript: true,
+})
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  // Refresh session — MUST be called before any response is returned
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const { pathname } = request.nextUrl
-
-  // Protected: /profile/* — require auth
-  if (pathname.startsWith('/profile')) {
-    if (!user) {
-      const redirectUrl = request.nextUrl.clone()
-      redirectUrl.pathname = '/login'
-      redirectUrl.searchParams.set('next', pathname)
-      return NextResponse.redirect(redirectUrl)
-    }
-  }
-
-  // Protected: /admin/* — require auth + admin role
-  if (pathname.startsWith('/admin')) {
-    if (!user) {
-      const redirectUrl = request.nextUrl.clone()
-      redirectUrl.pathname = '/login'
-      redirectUrl.searchParams.set('next', pathname)
-      return NextResponse.redirect(redirectUrl)
-    }
-
-    // Check admin role
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile || profile.role !== 'admin') {
-      const forbiddenUrl = request.nextUrl.clone()
-      forbiddenUrl.pathname = '/403'
-      return NextResponse.redirect(forbiddenUrl)
-    }
-  }
-
-  return supabaseResponse
+export async function syncStripeProduct(productId: string): Promise<void> {
+  if (!process.env.STRIPE_SECRET_KEY) return
+  // 1. Read product: get title, price_cents, member_price_cents, stripe_product_id
+  // 2. If stripe_product_id non-null/non-empty: return (idempotent)
+  // 3. stripe.products.create({ name: title })
+  // 4. stripe.prices.create({ unit_amount: price_cents, currency: 'usd', product: stripeProductId })
+  // 5. stripe.prices.create({ unit_amount: member_price_cents, currency: 'usd', product: stripeProductId })
+  // 6. adminClient.from('products').update({ stripe_product_id, stripe_price_id, stripe_member_price_id }).eq('id', productId)
 }
 
-export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
-  ],
+export async function syncStripeNewPrices(productId: string, memberPriceCents: number): Promise<void> {
+  if (!process.env.STRIPE_SECRET_KEY) return
+  // 1. Read product: get stripe_product_id, price_cents
+  // 2. stripe.prices.create full price → new stripe_price_id
+  // 3. stripe.prices.create member price (use memberPriceCents param — DB-sourced) → new stripe_member_price_id
+  // 4. adminClient.from('products').update({ stripe_price_id, stripe_member_price_id }).eq('id', productId)
+  // Note: old prices are NOT archived in Phase 2
 }
 ```
 
+`memberPriceCents` is always passed from the DB `.select('member_price_cents')` result — never recomputed in JS (WARN-3 compliance).
+
 ---
 
-## 8. Google OAuth Callback (`src/app/api/auth/callback/route.ts`)
+## 9. Slug Generation Utility — `src/lib/utils/slugify.ts`
 
 ```typescript
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
-
-export async function GET(request: NextRequest) {
-  const requestUrl = new URL(request.url)
-  const code = requestUrl.searchParams.get('code')
-  const next = requestUrl.searchParams.get('next') ?? '/library'
-
-  if (code) {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() { return cookieStore.getAll() },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          },
-        },
-      }
-    )
-
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) {
-      // Validate next param is safe (starts with /)
-      const redirectTo = next.startsWith('/') ? next : '/library'
-      return NextResponse.redirect(new URL(redirectTo, requestUrl.origin))
-    }
-  }
-
-  return NextResponse.redirect(new URL('/login?error=auth_failed', requestUrl.origin))
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-')
 }
+```
+
+**Uniqueness check pattern** (used in both `createProduct` and `createService`):
+```typescript
+const candidate = slugify(title)
+const { data: existing } = await supabase
+  .from('products') // or 'services'
+  .select('id')
+  .eq('slug', candidate)
+  .maybeSingle()
+
+const slug = existing
+  ? `${candidate}-${crypto.randomUUID().slice(0, 6)}`
+  : candidate
 ```
 
 ---
 
-## 9. Login Page (`src/app/login/page.tsx`)
+## 10. Admin Layout Structure
 
-**Component type:** Client Component (`'use client'`)
-
-**State machine:**
-- Step `email`: email input + Submit button + "Sign in with Google" button
-- Step `otp`: 6-digit code input + Verify button + Resend link
-
-**Key behaviors:**
-- Email submit: calls `supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } })`, transitions to `otp` step on success
-- OTP verify: calls `supabase.auth.verifyOtp({ email, token, type: 'email' })`, on success reads `next` param from URL (validated: must start with `/`) and redirects with `router.push`
-- Resend: calls `signInWithOtp` again with the same email
-- Google OAuth: `supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: `${window.location.origin}/api/auth/callback` } })`
-- Error states: inline below input, not toast
-- No full page reload between steps — pure React state
-
----
-
-## 10. Profile Page
-
-**`src/app/profile/page.tsx`** — Server Component:
-- Uses `createClient()` from `src/lib/supabase/server.ts`
-- Calls `supabase.auth.getUser()` to get email (read-only auth field)
-- Calls `supabase.from('profiles').select('*').eq('id', user.id).single()` for profile data
-- If no session (shouldn't happen — middleware guards this), redirect to `/login`
-- Renders `<ProfileForm>` client component with initial profile data + user email as props
-
-**`src/components/profile/profile-form.tsx`** — Client Component:
-- Props: `initialProfile: Profile`, `userEmail: string`
-- Local state: all editable fields (display_name, username, bio, phone, website, avatar_url)
-- On save:
-  1. Username uniqueness check: `supabase.from('profiles').select('id').eq('username', newUsername).neq('id', currentUserId).maybeSingle()` — if row returned, show inline error "Username already taken"
-  2. `supabase.from('profiles').update({ ...fields, profile_complete: displayName !== '' && username !== '' }).eq('id', userId)`
-  3. Success: `toast({ title: 'Profile saved' })`, failure: `toast({ title: 'Error', description: error.message, variant: 'destructive' })`
-- Avatar upload:
-  1. User selects file via `<input type="file" accept="image/*">`
-  2. `supabase.storage.from('avatars').upload(`${userId}/avatar.${ext}`, file, { upsert: true })`
-  3. `supabase.storage.from('avatars').getPublicUrl(path)` → store URL in `avatar_url` state
-  4. Avatar URL is saved with the rest of the profile on Save
-
----
-
-## 11. Root Layout (`src/app/layout.tsx`)
-
-**Component type:** Server Component (async)
-
-**Structure:**
+**`src/app/(admin)/layout.tsx`** — Server Component (no `'use client'`)
 ```tsx
-<html>
-  <head>
-    <script async src="https://r.wdfl.co/rw.js"
-      data-rewardful={process.env.NEXT_PUBLIC_REWARDFUL_API_KEY} />
-  </head>
-  <body>
-    <div id="multiplier-banner-slot" />  {/* Phase 4A */}
-    <Navbar />                            {/* Server component, reads session */}
-    <main>{children}</main>
-    <Footer />                            {/* Server component */}
-    <Toaster />                           {/* shadcn/ui Toaster — client */}
-  </body>
-</html>
-```
+import { AdminSidebar } from '@/components/admin/admin-sidebar'
 
-**Navbar:**
-- Server component: reads session via `createClient()` from server.ts
-- Left: Logo ("Omni Incubator") → `/`
-- Center: nav links (Library, Pricing, Marketplace, Sweepstakes)
-- Right: `<NavbarAuth />` — client component that receives `user` prop (passed from server)
-
-**NavbarAuth (client component):**
-- When user = null: "Sign In" button → `/login`
-- When user exists: avatar image (or initials fallback) + username → `<DropdownMenu>` with: Profile, My E-books, Orders, Entries, Subscription, Sign Out
-- Sign Out calls `supabase.auth.signOut()` then `router.refresh()`
-
-**MobileNav (client component):**
-- Hamburger button (visible at `md:hidden`)
-- Opens `<Sheet>` from right with same nav links + auth state
-- Uses `useState` for open/close
-
-**Footer:**
-- Privacy, Terms, Sweepstakes Rules links
-- Copyright: `© {new Date().getFullYear()} Omni Incubator`
-
----
-
-## 12. Sentry Configuration
-
-**`sentry.client.config.ts`:**
-```typescript
-import * as Sentry from "@sentry/nextjs";
-
-const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
-
-if (dsn) {
-  Sentry.init({
-    dsn,
-    tracesSampleRate: 1.0,
-    debug: false,
-  });
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-950">
+      <AdminSidebar />
+      <main className="flex-1 overflow-y-auto p-8">{children}</main>
+    </div>
+  )
 }
 ```
 
-**`sentry.server.config.ts`** and **`sentry.edge.config.ts`:** Same pattern — wrap init in `if (dsn)` check.
+No `<Navbar>`, `<Footer>`, or `<Providers>`. Root layout provides the HTML shell.
 
-**`next.config.ts`:**
+**`src/components/admin/admin-sidebar.tsx`** — Server Component
+
+Sidebar items (in order):
+1. Dashboard → `/admin`
+2. Products → `/admin/products`
+3. E-books → `/admin/ebooks` (placeholder)
+4. Sample Products → `/admin/sample-products` (placeholder)
+5. Services → `/admin/services`
+6. Orders → `/admin/orders` (placeholder)
+7. Users → `/admin/users` (placeholder)
+8. Sweepstakes → `/admin/sweepstakes` (placeholder)
+9. Coupons → `/admin/coupons` (placeholder)
+10. Settings → `/admin/settings` (placeholder)
+
+Uses `<Link>` from `next/link`. Active state via `usePathname()` — if active state is needed, sidebar must be split: Server Component wrapper + Client Component for active-link highlighting. Decision: `AdminSidebar` is a Server Component that renders static links; active styling is handled with CSS using Next.js `<Link>` `aria-current` or simply no active state in Phase 2 (acceptable).
+
+All placeholder pages render:
+```tsx
+export default function PlaceholderPage() {
+  return (
+    <div>
+      <h1 className="text-2xl font-bold">[Page Name]</h1>
+      <p className="mt-2 text-zinc-500">Coming in a future phase.</p>
+    </div>
+  )
+}
+```
+
+---
+
+## 11. Library Page — `/library`
+
+**`src/app/library/page.tsx`** — Server Component
+
 ```typescript
-import { withSentryConfig } from "@sentry/nextjs";
+export const revalidate = 60
 
-const nextConfig = { /* ... */ };
-
-export default withSentryConfig(nextConfig, {
-  silent: true,
-  org: process.env.SENTRY_ORG,
-  project: process.env.SENTRY_PROJECT,
-  authToken: process.env.SENTRY_AUTH_TOKEN,
-  widenClientFileUpload: true,
-  hideSourceMaps: true,
-  disableLogger: true,
-});
+export default async function LibraryPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+})
 ```
 
-**`src/app/error.tsx`:** Global error boundary using `"use client"`. Calls `Sentry.captureException(error)` in `useEffect`.
+**Supabase query pattern**:
+```typescript
+let query = supabase
+  .from('products')
+  .select('id, slug, title, description, price_cents, cover_image_url, ebooks!inner(id, authors, category)', { count: 'exact' })
+  .eq('type', 'ebook')
+  .eq('is_active', true)
+  .is('deleted_at', null)
+
+// Apply category filter (OR within group)
+if (categories.length > 0) {
+  query = query.in('ebooks.category', categories)
+}
+// Apply other filter groups similarly
+
+// Apply sort
+switch (sort) {
+  case 'price_asc': query = query.order('price_cents', { ascending: true }); break
+  case 'price_desc': query = query.order('price_cents', { ascending: false }); break
+  case 'title_asc': query = query.order('title', { ascending: true }); break
+  default: query = query.order('created_at', { ascending: false })
+}
+
+// Apply search
+if (q) {
+  query = query.or(`title.ilike.%${q}%,description.ilike.%${q}%`)
+  // tags search: separate filter applied after — filter in JS for tags array match
+}
+
+// Pagination: first page
+query = query.range(0, 11)
+```
+
+Note on tags search: Supabase PostgREST does not support `ilike` on array columns directly via the JS client's `.or()`. Use a workaround: after fetching results, filter in-memory for tags match as well, OR use a raw `.filter()` call:
+```typescript
+if (q) {
+  query = query.or(`title.ilike.%${q}%,description.ilike.%${q}%`)
+}
+```
+Tags are checked separately via a JS-level `.filter()` on the result set: `products.filter(p => p.ebooks.tags.some(t => t.toLowerCase().includes(q.toLowerCase())))`. This approach is acceptable at Phase 2 scale. If this causes incorrect `total` count, the Backend agent should implement a raw SQL RPC for the search query. The Backend agent must use their judgment here and document their approach in `BACKEND_DONE.md`.
+
+**Page renders**:
+- `<SearchInput>` (Client Component) — updates URL on 300ms debounce
+- `<FilterSidebar>` (Client Component) — multi-select checkboxes that update URL params
+- `<SortSelect>` (Client Component)
+- Product grid: 12 `<ProductCard>` components (Server Component)
+- `<LoadMoreButton>` (Client Component) — shows if `hasMore = true` (derived from total > 12)
+- Empty state if `products.length === 0`
 
 ---
 
-## 13. shadcn/ui Setup
+## 12. E-book Detail Page — `/library/[slug]`
 
-**Initialization:**
+**`src/app/library/[slug]/page.tsx`** — Server Component
+
+```typescript
+export const revalidate = 60
+
+export default async function EbookDetailPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>
+})
+```
+
+**Data fetch**:
+```typescript
+const { data: product } = await supabase
+  .from('products')
+  .select('*, ebooks!inner(*)')
+  .eq('slug', slug)
+  .eq('is_active', true)
+  .is('deleted_at', null)
+  .single()
+
+if (!product) notFound()
+```
+
+**Ownership check** (if user authenticated):
+```typescript
+const { data: { user } } = await supabase.auth.getUser()
+let userOwnsEbook = false
+if (user) {
+  const { data: ue } = await supabase
+    .from('user_ebooks')
+    .select('id')
+    .eq('ebook_id', product.ebooks.id)
+    .eq('user_id', user.id)
+    .maybeSingle()
+  userOwnsEbook = !!ue
+}
+```
+
+**Rendered content** (via `<EbookDetail>` Client Component for upsell toggle state):
+- Cover image (`<Image>` from next/image) — with placeholder if `cover_image_url` null
+- Title, authors (joined with `, `)
+- Category badge (display label mapped from DB value)
+- `description` (short)
+- `long_description` via `<ReactMarkdown remarkPlugins={[remarkGfm]}>`
+- Tags list
+- Scale metadata: operator_dependency, scale_potential, cost_to_start (display labels)
+- Price section: full price + "Members: $X.XX — 50% off"
+- `<PreviewDownloadButton>` — visible only if `preview_file_path` is non-null and non-empty
+- Buy CTA button: "Buy — $X.XX" (placeholder — no action in Phase 2)
+- If `userOwnsEbook`: small note "You already own this e-book" near Buy button
+- Entry badge placeholder: static text "Earn entries with purchase"
+- Membership upsell toggle: `<input type="checkbox">` with label "Also join Omni Membership (+$15/mo, 7-day free trial)" — React `useState` only, not persisted
+
+Display label maps (used in both library and detail):
+```typescript
+const CATEGORY_LABELS: Record<string, string> = {
+  conceptual: 'Conceptual Learning',
+  skill: 'Skill Learning',
+  industry: 'Industry Guides',
+  startup_guide: 'Startup 0→1 Guides',
+}
+const OPERATOR_LABELS: Record<string, string> = {
+  physical_service: 'Physical / Service',
+  hybrid: 'Hybrid',
+  digital_saas: 'Digital / SaaS',
+}
+const SCALE_LABELS: Record<string, string> = {
+  low: 'Low', medium: 'Medium', high: 'High',
+}
+const COST_LABELS: Record<string, string> = {
+  under_5k: 'Under $5K',
+  '5k_to_50k': '$5K – $50K',
+  over_50k: 'Over $50K',
+}
+```
+
+These label maps live in `src/lib/utils/product-labels.ts` — shared between library page and detail page.
+
+---
+
+## 13. Marketplace Page — `/marketplace`
+
+**`src/app/marketplace/page.tsx`** — replaces Phase 1 placeholder
+
+```typescript
+export const revalidate = 60
+```
+
+Sections:
+1. Hero: "Service Marketplace — Coming Soon" headline + subheading copy
+2. Service grid (if any services exist): card per service showing title, description, category, "Coming Soon" badge
+3. Email capture form: `<form action="/api/lead-capture" method="POST">` — email input + submit button. No JS needed; 404 from missing API route is silent until Phase 4A.
+
+---
+
+## 14. Admin Product Form — `src/components/admin/product-form.tsx`
+
+Client Component. Props: `product?: { id: string } & ProductWithEbook` (undefined = create mode).
+
+Fields:
+- `title` — text input (required)
+- `description` — textarea (required)
+- `long_description` — textarea (optional, markdown note shown)
+- `price` — text input displaying dollars, e.g. "29.99" (required). On submit: `Math.round(parseFloat(value) * 100)` → stored as `price_cents`
+- `category` — `<select>` with options: `conceptual`, `skill`, `industry`, `startup_guide`
+- `subcategory` — text input (optional)
+- `tags` — text input accepting comma-separated values; displayed as chips; converted to `string[]` on submit
+- `operator_dependency` — `<select>` with options: `physical_service`, `hybrid`, `digital_saas`
+- `scale_potential` — `<select>`: `low`, `medium`, `high`
+- `cost_to_start` — `<select>`: `under_5k`, `5k_to_50k`, `over_50k`
+- `custom_entry_amount` — number input (optional, nullable)
+- `is_active` — checkbox/toggle (default true)
+- `is_coming_soon` — checkbox/toggle (default false)
+- Slug — read-only display field in edit mode only
+
+File upload sub-sections (three instances of `<FileUploadSection>`):
+- Cover image: `type="cover"`, `productId` (available in edit mode; disabled with tooltip "Save product first" in create mode until after first save)
+- Main PDF: `type="main"`, same gating
+- Preview PDF: `type="preview"`, same gating
+
+Submit:
+- Create mode: `formAction={createProduct}` — on success, redirect to `/admin/products/[id]/edit`
+- Edit mode: `formAction={updateProduct.bind(null, product.id)}` — on success, show toast "Saved"
+- Archive: separate `<button>` with `formAction={archiveProduct.bind(null, product.id)}` — on success, redirect to `/admin/products`
+
+---
+
+## 15. File Upload Section — `src/components/admin/file-upload-section.tsx`
+
+Client Component. Props:
+```typescript
+{
+  productId: string | undefined  // undefined = create mode (upload disabled)
+  type: 'main' | 'preview' | 'cover'
+  currentValue: string | null    // existing path or url
+  label: string                  // e.g. "Main PDF", "Preview PDF", "Cover Image"
+}
+```
+
+Behavior:
+- If `productId` is undefined: show disabled input with "Save product first to enable uploads"
+- If `currentValue` is non-empty: show current status indicator (e.g., "File uploaded: [filename]")
+- If `currentValue` is empty/null: show "No file uploaded yet"
+- `<input type="file" accept="...">` — onChange triggers `fetch('/api/admin/ebooks/${productId}/upload', { method: 'POST', body: formData })`
+- Shows upload progress state (loading spinner)
+- On success: update displayed status
+- On error: show error message inline
+
+---
+
+## 16. Admin Service Form — `src/components/admin/service-form.tsx`
+
+Client Component. Props: `service?: Service` (undefined = create mode).
+
+Fields: title, description, long_description, rate_type (select), rate_cents (dollars input — required unless rate_type=custom), rate_label (optional), category, tags, status (select), is_coming_soon toggle.
+
+Validation: `rate_cents` field hidden/disabled when `rate_type === 'custom'`.
+
+Submit: same Server Action pattern as product form.
+
+---
+
+## 17. Environment Variables
+
+No new environment variables in Phase 2. All Phase 1 variables apply:
+
+| Variable | Used in |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | All Supabase clients |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Browser/server clients |
+| `SUPABASE_SERVICE_ROLE_KEY` | `adminClient` |
+| `STRIPE_SECRET_KEY` | `src/lib/stripe.ts` (optional — sync skipped if absent) |
+
+---
+
+## 18. Package Installation Required
+
+Before Backend agent begins:
 ```bash
-npx shadcn@latest init
-```
-- Style: New York
-- Base color: zinc
-- CSS variables: yes
-- `components.json` at project root
-
-**Components to install (10 required):**
-```bash
-npx shadcn@latest add button card input dialog dropdown-menu badge toast tabs table sheet skeleton
+npm install react-markdown remark-gfm
 ```
 
-All components install to `src/components/ui/`. Import paths: `@/components/ui/button`, etc.
-
-**`Toaster` component note:** shadcn/ui Toast system exports a `Toaster` component from `@/components/ui/toaster` (for the `toast` variant) or `@/components/ui/sonner` if using Sonner. Decision: use the built-in `toast` (not Sonner) to avoid adding another dependency. `<Toaster />` goes in root layout.
+Add to `package.json` dependencies. Both packages have TypeScript definitions included.
 
 ---
 
-## 14. Environment Variables
+## 19. Non-Functional Requirements
 
-**`.env.local.example`** at project root. All 18 variables per §14 of blueprint + PRD-REPORT WARN-1 correction.
-
----
-
-## 15. Storage Bucket Documentation (`supabase/storage.md`)
-
-Documents 5 buckets:
-- `ebooks` — private, signed URLs (1hr)
-- `ebook-previews` — public
-- `sample-products` — private, signed URLs (1hr)
-- `avatars` — public
-- `covers` — public
-
-CORS: allow `https://omniincubator.org` and `http://localhost:3000`. No file size limits specified beyond Supabase defaults; admin portal will handle large PDF uploads.
+| Concern | Requirement |
+|---|---|
+| TypeScript | All new files: full type coverage. `npx tsc --noEmit` must pass at 0 errors. |
+| Build | `npm run build` must pass with no errors. |
+| Error handling | Server Actions return `{ error: string }` — never throw in form handlers. API routes let errors propagate to Sentry naturally. |
+| Caching | ISR `revalidate = 60` on `/library`, `/library/[slug]`, `/marketplace`. Admin pages are dynamic (no `revalidate`). |
+| shadcn/ui | Use existing components: `Button`, `Input`, `Table`, `Badge`, `Card`, `Dialog`, `Tabs`, `Sheet`, `Skeleton`, `Dropdown-menu`. Do not install new shadcn components unless a listed component is insufficient. |
+| Supabase joins | Use `!inner` join notation for required FK relations (e.g., `ebooks!inner(...)`). |
+| Admin-only storage | Upload API route always uses `adminClient` for storage ops. Cookie-based `createClient()` is used only for auth verification. |
+| No parallel middleware | No new middleware files. `src/middleware.ts` handles all route protection. |
 
 ---
 
-## 16. Third-Party Dependencies to Install
+## 20. WARN Resolutions
 
-```bash
-# Core
-npm create next-app@latest omni-incubator --typescript --tailwind --eslint --app --src-dir --import-alias "@/*"
-
-# Supabase
-npm install @supabase/ssr @supabase/supabase-js
-
-# Sentry
-npm install @sentry/nextjs
-
-# shadcn/ui peer dependencies (installed via shadcn init)
-# clsx, tailwind-merge, class-variance-authority, lucide-react, radix-ui packages
-```
-
----
-
-## 17. Non-Functional Requirements
-
-- **Session refresh:** Handled by middleware on every request. No extra client-side refresh logic needed.
-- **Error handling:** All Supabase calls in server components must handle the `{ data, error }` destructure pattern. Errors propagate to `error.tsx`.
-- **Rate limiting:** Not in scope for Phase 1 (lead capture is Phase 4A).
-- **TypeScript:** `strict: true` in `tsconfig.json`. Use `any` as a type placeholder for Supabase database types until Phase 2 generates them.
-- **Environment variables:** App must gracefully handle missing env vars at dev time. Supabase clients will throw at runtime but not at build time.
-- **No server actions** used in Phase 1 — all mutations go through client-side Supabase calls or Route Handlers for simplicity.
+| Finding | Resolution |
+|---|---|
+| WARN-1: `ebooks.file_path NOT NULL` | Empty string `''` placeholder on insert. No migration. Admin UI shows "No PDF uploaded" when `file_path === ''`. |
+| WARN-2: `products.type` vs `product_type` | All code uses column `products.type`. `product_type` is the ENUM type name in migrations only — never referenced in application code. |
+| WARN-3: `member_price_cents` recompute risk | Always read from DB after INSERT/UPDATE via `.select('member_price_cents')`. Never compute in JS. Passed to Stripe sync from DB value. |

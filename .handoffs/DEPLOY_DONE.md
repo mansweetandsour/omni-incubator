@@ -1,280 +1,168 @@
-# DEPLOY_DONE.md — Phase 1: Foundation
+# DEPLOY_DONE.md — Phase 2: Products & Library
 
 **Result: APPROVED**
 **Date:** 2026-04-09
-**Phase:** 1 — Foundation
+**Phase:** 2 of 6
 
 ---
 
-## Deployment Readiness Summary
+## Summary
 
-The codebase is build-clean and deployment-ready. No live deployment is possible yet — it is blocked on two external prerequisites: **E1** (Supabase project creation) and **E11** (Vercel project creation). All infra configuration has been verified and documented below for when those are complete.
+Phase 2 is build-clean and infra-ready. No new environment variables were introduced. No new infrastructure is required. Two new npm dependencies (`react-markdown`, `remark-gfm`) are consistent between `package.json` and `package-lock.json`. No hardcoded secrets found. `.gitignore` coverage is complete.
 
 ---
 
 ## Task Results
 
-### Task 1 — Production Build
+### Task 1 — Build Clean Verification
 
-**PASS — Exit code 0**
+**PASS — Confirmed by QA (not re-run)**
+
+QA re-validation (2026-04-09) confirmed:
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://dummy.supabase.co \
 NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy \
+SUPABASE_SERVICE_ROLE_KEY=dummy_service_role \
 NEXT_PUBLIC_SITE_URL=https://omniincubator.org \
 node node_modules/next/dist/bin/next build
 
-▲ Next.js 16.2.3 (Turbopack)
-⚠ Middleware deprecation warning (non-blocking — see OBS-1)
-✓ Compiled successfully in 4.0s
-✓ Generating static pages using 15 workers (14/14) in 745ms
-
-Route (app)
-├ ƒ /
-├ ƒ /_not-found
-├ ƒ /403
-├ ƒ /api/auth/callback
-├ ƒ /library
-├ ƒ /login
-├ ƒ /marketplace
-├ ƒ /pricing
-├ ƒ /privacy
-├ ƒ /profile
-├ ƒ /sweepstakes
-└ ƒ /terms
-
-Exit code: 0
+→ ✓ Compiled successfully in 4.9s
+→ ✓ Generating static pages (27/27)
+→ EXIT_CODE: 0
 ```
 
-Note: `npm run build` failed with `MODULE_NOT_FOUND` for `../server/require-hook` under Node v25.6.1 — this is a known compat issue between the `.bin/next` shim and Node 25. Running via `node node_modules/next/dist/bin/next build` directly (which is what Vercel's build system does) succeeds cleanly. This is a local environment quirk; Vercel will not be affected.
+TypeScript: `tsc --noEmit` → 0 errors. All 27 routes compiled. QA is the authoritative source for this check; no re-run is required.
 
 ---
 
-### Task 2 — `.env.local.example`
+### Task 2 — `.gitignore` Audit
 
-**PASS**
+**PASS — No changes required**
 
-`.env.local.example` exists at the project root. Contains all **18 required environment variables** with inline comments and source locations. No secrets are committed — all values are blank placeholders. See the full list in the "Environment Variables" section below.
+Phase 2 introduced no new artifact types. Existing `.gitignore` coverage is complete:
 
----
-
-### Task 3 — `vercel.json`
-
-**NOT REQUIRED — SKIPPED**
-
-A `vercel.json` is not needed for this project. Rationale:
-- Next.js 14+ App Router is natively supported by Vercel with zero additional config.
-- `next.config.ts` defines no custom rewrites, redirects, or headers that would need mirroring.
-- No custom function regions, memory limits, or timeout overrides are required for Phase 1.
-- The Sentry `withSentryConfig` wrapper is handled entirely at build time (no Vercel-level config needed).
-
-If custom function timeouts are needed in Phase 3 (Stripe webhook handler), a minimal `vercel.json` can be added at that time.
-
----
-
-### Task 4 — `.gitignore` Audit
-
-**PASS (with one fix applied)**
-
-The `.gitignore` correctly excludes:
-
-| Entry | Pattern | Status |
-|---|---|---|
-| `.env*` | `.env*` | PRESENT |
-| `.next/` | `/.next/` | PRESENT |
-| `node_modules/` | `/node_modules` | PRESENT |
-| `.vercel/` | `.vercel` | PRESENT |
-| `.supabase/` | `.supabase/` | ADDED (was missing) |
-
-The `.supabase/` directory is created by `supabase init` and `supabase start` (local dev). It contains local Docker state and should not be committed. This entry was added to `.gitignore` during this DevOps pass.
-
----
-
-### Task 5 — Manual Deployment Steps
-
-#### Step 1: Create the Supabase Project (External Task E1)
-
-1. Go to [app.supabase.com](https://app.supabase.com) → New project
-2. Set project name: `omni-incubator`
-3. Set database password (save it securely — never commit)
-4. Choose region closest to your user base (recommended: `us-east-1`)
-5. Wait for provisioning (~2 minutes)
-6. Go to **Project Settings → API** and copy:
-   - `URL` → `NEXT_PUBLIC_SUPABASE_URL`
-   - `anon public` key → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `service_role secret` key → `SUPABASE_SERVICE_ROLE_KEY`
-
-#### Step 2: Run Supabase Migrations Against Production
-
-After the Supabase project is live, apply all 14 Phase 1 migrations:
-
-```bash
-# Install Supabase CLI if not already installed
-brew install supabase/tap/supabase
-
-# Link to your remote project (get the project ref from your Supabase dashboard URL)
-supabase link --project-ref <your-project-ref>
-
-# Push all migrations
-supabase db push
-```
-
-This will apply all files in `supabase/migrations/` in timestamp order. After Phase 1 migrations complete:
-- 18 tables created with full RLS
-- 4 triggers installed
-- `entry_verification` materialized view created
-- Seed data: 2 membership products inserted
-
-To verify after push:
-```bash
-# Check migration history
-supabase migration list
-```
-
-#### Step 3: Configure Supabase Auth
-
-Follow the instructions in `supabase/auth-config.md`:
-1. Enable Email OTP, disable magic link, set OTP expiry to 10 minutes
-2. Add Google OAuth provider (requires Google Cloud project — External Task E3)
-3. Add allowed redirect URLs: `https://omniincubator.org/api/auth/callback`
-
-#### Step 4: Create Supabase Storage Buckets
-
-Follow `supabase/storage.md` to create all 5 buckets manually in the Supabase dashboard:
-
-| Bucket | Access |
+| Pattern | What it covers |
 |---|---|
-| `ebooks` | Private |
-| `ebook-previews` | Public |
-| `sample-products` | Private |
-| `avatars` | Public |
-| `covers` | Public |
+| `.env*` | `.env.local`, `.env.production`, any env variant |
+| `/.next/` | Next.js build output |
+| `/node_modules` | npm dependencies |
+| `.vercel` | Vercel CLI artifacts |
+| `.supabase/` | Supabase CLI local dev state (added in Phase 1) |
+| `*.tsbuildinfo` | TypeScript incremental build cache |
 
-Configure CORS on each bucket to allow `https://omniincubator.org` and `http://localhost:3000`.
-
-#### Step 5: Connect GitHub Repo to Vercel (External Task E11)
-
-1. Push the repository to GitHub (if not already done)
-2. Go to [vercel.com](https://vercel.com) → Add New Project
-3. Import the GitHub repository
-4. Vercel will auto-detect Next.js — no framework override needed
-5. Set **Root Directory** to `/` (the default)
-6. Set **Build Command** to `next build` (the default)
-7. Set **Output Directory** to `.next` (the default)
-8. Do **NOT** deploy yet — set environment variables first (Step 6)
-
-#### Step 6: Set Environment Variables in Vercel Dashboard
-
-In the Vercel project → **Settings → Environment Variables**, add all variables listed in the "Environment Variables" section below. Set each to the **Production** environment (and optionally Preview/Development as appropriate).
-
-For `NEXT_PUBLIC_SITE_URL`: set to `https://omniincubator.org` in Production, `https://<preview-url>.vercel.app` in Preview.
-
-#### Step 7: Deploy
-
-After all env vars are set:
-1. Trigger a deployment from the Vercel dashboard (or push to `main`)
-2. Verify the deployment log — build should exit 0 with 14 pages generated
-3. Check the deployed URL for basic page loads (`/`, `/login`, `/403`)
-4. Configure your custom domain `omniincubator.org` in Vercel → **Settings → Domains**
+No new file types (uploads, generated files, local storage artifacts) are written to the working tree by Phase 2 code. File uploads go directly to Supabase Storage via the API.
 
 ---
 
-### Task 6 — Secrets Audit
+### Task 3 — Phase 3 Stripe Webhook — `vercel.json` Recommendation
+
+**ADVISORY — No action required now**
+
+Phase 3 will add `POST /api/webhooks/stripe`. Stripe webhooks send large payloads and can take several seconds to process (subscription events, invoice events). Vercel's default function timeout for Hobby and Pro plans is 10s and 60s respectively.
+
+**Recommendation for Phase 3:** Create `vercel.json` at the project root with:
+
+```json
+{
+  "functions": {
+    "src/app/api/webhooks/stripe/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
+```
+
+This should be added by the Backend or DevOps agent when the Stripe webhook route is built in Phase 3, not before.
+
+---
+
+### Task 4 — Secrets Audit
 
 **PASS — No hardcoded secrets found**
 
-Scanned all `.ts`, `.tsx`, `.js`, `.json`, `.sql`, and `.md` files (excluding `node_modules/` and `.next/`) for patterns matching:
-- Stripe key prefixes (`sk_live_`, `sk_test_`, `pk_live_`, `pk_test_`)
-- Resend API key prefix (`re_`)
-- JWT-like tokens (`eyJ...`)
-- Inline `password=`, `secret=`, `api_key=`, `token=` assignments with non-empty values
+Scanned `src/` for common hardcoded secret patterns:
+- Stripe key prefixes: `sk_live_`, `sk_test_`, `pk_live_`, `pk_test_`, `rk_live_`
+- Generic patterns: inline `password=`, `secret=`, `api_key=` with non-env values
+- AWS key patterns: `AKIA[0-9A-Z]`
+- Google API key pattern: `AIza`
 
-**Result: 0 matches.** All secrets are referenced exclusively via `process.env.*`. The `next.config.ts` correctly reads `process.env.SENTRY_AUTH_TOKEN` and `process.env.SENTRY_ORG` — no values are hardcoded.
+**Result: 0 matches.**
 
----
-
-## Environment Variables
-
-All 18 variables must be configured in the Vercel dashboard before go-live.
-
-| Variable | Scope | Source | Notes |
-|---|---|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Public | Supabase → Project Settings → API | Project URL (`https://xxx.supabase.co`) |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Public | Supabase → Project Settings → API | Anon/public key — safe for browser |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-only | Supabase → Project Settings → API | Bypasses RLS — NEVER expose client-side |
-| `STRIPE_SECRET_KEY` | Server-only | Stripe → Developers → API Keys | `sk_live_...` for production |
-| `STRIPE_WEBHOOK_SECRET` | Server-only | Stripe → Webhooks → endpoint details | Created when you add the Vercel URL as a webhook endpoint (Phase 3) |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Public | Stripe → Developers → API Keys | `pk_live_...` for production |
-| `STRIPE_MONTHLY_PRICE_ID` | Server-only | Stripe → Product catalog | Created when you set up products in Stripe (External Task E5) |
-| `STRIPE_ANNUAL_PRICE_ID` | Server-only | Stripe → Product catalog | Created when you set up products in Stripe (External Task E5) |
-| `BEEHIIV_API_KEY` | Server-only | Beehiiv → Settings → Integrations → API | |
-| `BEEHIIV_PUBLICATION_ID` | Server-only | Beehiiv → Settings | `pub_...` |
-| `RESEND_API_KEY` | Server-only | Resend → API Keys | `re_...` |
-| `RESEND_FROM_EMAIL` | Server-only | Resend → Domains (must be verified) | e.g. `hello@omniincubator.org` |
-| `UPSTASH_REDIS_REST_URL` | Server-only | Upstash Console → Redis → REST API | Created in External Task E9 |
-| `UPSTASH_REDIS_REST_TOKEN` | Server-only | Upstash Console → Redis → REST API | |
-| `NEXT_PUBLIC_REWARDFUL_API_KEY` | Public | Rewardful → Settings → General | Safe for browser (it's a JS snippet key) |
-| `NEXT_PUBLIC_SENTRY_DSN` | Public | Sentry → Project Settings → Client Keys | App no-ops gracefully when absent |
-| `SENTRY_AUTH_TOKEN` | Server-only | Sentry → Settings → Auth Tokens | Required for source map uploads during build |
-| `NEXT_PUBLIC_SITE_URL` | Public | Set manually | `https://omniincubator.org` in production |
-
-**Variables required for Phase 1 go-live** (minimal set to get auth working):
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `NEXT_PUBLIC_SITE_URL`
-
-All other variables can be added as their respective features are built in later phases.
+All secrets in Phase 2 code are accessed exclusively via `process.env.*`. `src/lib/stripe.ts` reads `process.env.STRIPE_SECRET_KEY` at call time inside the lazy factory function — not at module evaluation time. No values are inlined.
 
 ---
 
-## Infrastructure Changes Made This Pass
+### Task 5 — `package.json` / `package-lock.json` Consistency
 
-| Item | Change |
+**PASS**
+
+Both files exist:
+- `package.json` — present, well-formed
+- `package-lock.json` — present, 17,312 lines (consistent with a full dependency tree)
+
+Phase 2 additions verified in both files:
+
+| Package | `package.json` version | `package-lock.json` resolved |
+|---|---|---|
+| `react-markdown` | `^10.1.0` | `react-markdown-10.1.0.tgz` |
+| `remark-gfm` | `^4.0.1` | `remark-gfm-4.0.1.tgz` |
+| `stripe` | `^22.0.1` | present (installed in Phase 1 as a future dependency) |
+
+No mismatches detected.
+
+---
+
+## New or Changed Environment Variables
+
+**None.** Phase 2 introduced no new environment variables.
+
+`STRIPE_SECRET_KEY` was already documented in `.env.local.example` from Phase 1 (added in anticipation of Phase 3). Phase 2's `src/lib/stripe.ts` reads it but adds no new Stripe-related variables.
+
+---
+
+## Infrastructure Resources Created or Modified
+
+**None.** Phase 2 adds API routes and Server Actions but requires no new infrastructure, no new Supabase buckets, no new database migrations, and no new cloud services.
+
+The three Supabase Storage buckets used by the file upload API (`ebooks`, `ebook-previews`, `covers`) were provisioned in Phase 1 per `supabase/storage.md`.
+
+---
+
+## Staging / Production URLs
+
+No new deployment triggered for Phase 2 — the codebase is ready for deployment on the next push to the main branch. URLs unchanged from Phase 1:
+
+| Environment | URL |
 |---|---|
-| `.gitignore` | Added `.supabase/` exclusion (Supabase CLI local dev artifacts) |
-| `vercel.json` | Not created — not required for Next.js App Router on Vercel |
+| Production | `https://omniincubator.org` (pending E11 — Vercel setup) |
+| Local dev | `http://localhost:3000` |
+
+---
+
+## CI/CD Pipeline
+
+No changes. Deployment is via Vercel git integration (push to `main` triggers automatic build + deploy). No GitHub Actions pipeline is configured; Vercel handles build, preview, and production promotion.
 
 ---
 
 ## Rollback Procedure
 
-Since there is no live deployment yet, the rollback procedure for the first production deploy is:
-
 1. In Vercel dashboard → project → **Deployments** tab
-2. Find the previous deployment (or the deployment you want to roll back to)
-3. Click the three-dot menu → **Promote to Production**
-4. Vercel will instantly re-route production traffic — no rebuild required
+2. Locate the previous known-good deployment
+3. Click three-dot menu → **Promote to Production**
+4. Traffic is instantly re-routed — no rebuild required
 
-For database rollbacks: Supabase does not have automatic down-migrations. Rollback requires writing a new migration that reverses the changes. For Phase 1 (greenfield), rollback means dropping and recreating the project.
-
----
-
-## Observations
-
-### OBS-1: Next.js 16 Middleware Deprecation (inherited from QA)
-
-The build outputs:
-```
-⚠ The "middleware" file convention is deprecated. Please use "proxy" instead.
-```
-
-The installed version is Next.js 16.2.3 (SPEC specified 14). The middleware is functional — this is a warning only. Track for migration to `src/proxy.ts` before a future Next.js release makes it a hard error. Not a Phase 1 blocker.
-
-### OBS-2: `npm run build` vs. direct `node` invocation
-
-On Node.js v25.6.1, invoking `next` via the `.bin/next` shim fails with a missing `require-hook` module. Invoking via `node node_modules/next/dist/bin/next build` succeeds. Vercel's build infrastructure uses its own Node.js version (currently v20 LTS) and invokes Next.js correctly — this local quirk will not affect production builds on Vercel.
+No database migrations were included in Phase 2, so a rollback requires no DB changes.
 
 ---
 
-## Blocked On (External Tasks)
+## Blocked On (External Tasks — Phase 3)
 
-| Task | Description | Blocks |
+| Task | Description | Required by |
 |---|---|---|
-| **E1** | Create Supabase project at app.supabase.com | All database and auth functionality |
-| **E11** | Create Vercel project and connect GitHub repo | Deployment |
-| **E3** | Create Google Cloud OAuth credentials | Google sign-in (auth callback route is implemented; just needs credentials) |
-| **E5** | Create Stripe products and price IDs | Stripe-related env vars (not needed until Phase 3) |
-| **E9** | Create Upstash Redis database | Rate limiting on lead capture (not needed until Phase 4A) |
+| **E4** | Create Stripe account, get test-mode API keys | Phase 3 (Stripe checkout, webhooks) |
+| **E5** | Create Stripe Products and Prices for membership | Phase 3 (membership checkout) |
+| **E6** | Configure Stripe webhook endpoint in Stripe Dashboard | Phase 3 (webhook handler) |
 
-Phase 1 codebase is fully complete and deployment-ready. All infrastructure prerequisites are documented and actionable.
+Phase 2 codebase is complete and deployment-ready. Proceed to Phase 3 when E4 and E5 are done.
